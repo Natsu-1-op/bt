@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>我测 (移动端优化版)</title>
+    <title>我测 (单极性全正信号版)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
@@ -13,12 +13,10 @@
             background-color: #0f172a;
             color: #e2e8f0;
             font-family: 'JetBrains Mono', monospace;
-            /* 移动端允许滚动，桌面端固定 */
             overflow-y: auto; 
-            -webkit-tap-highlight-color: transparent; /* 移除点击高亮 */
+            -webkit-tap-highlight-color: transparent;
         }
 
-        /* 桌面端大屏锁定滚动，类似App体验 */
         @media (min-width: 768px) {
             body {
                 overflow: hidden;
@@ -28,13 +26,12 @@
         .canvas-container {
             position: relative;
             width: 100%;
-            /* 移动端高度较小，桌面端较大 */
             height: 35vh; 
             background: #000;
             border: 1px solid #334155;
             border-radius: 8px;
             box-shadow: 0 0 20px rgba(16, 185, 129, 0.1);
-            flex-shrink: 0; /* 防止被压缩 */
+            flex-shrink: 0;
         }
 
         @media (min-width: 768px) {
@@ -55,7 +52,6 @@
         .status-disconnected { background-color: #ef4444; box-shadow: 0 0 8px #ef4444; }
         .status-simulation { background-color: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
 
-        /* 控制面板：移动端自动高度，桌面端滚动 */
         .control-panel { 
             height: auto; 
             overflow-y: visible; 
@@ -63,7 +59,7 @@
         
         @media (min-width: 768px) {
             .control-panel {
-                height: 100%; /* 填充剩余空间 */
+                height: 100%; 
                 overflow-y: auto;
             }
         }
@@ -81,7 +77,6 @@
             width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px;
         }
         
-        /* 针对iOS输入框字体小于16px时会自动放大的修复 */
         input[type="text"], input[type="number"] {
             font-size: 16px; 
         }
@@ -91,13 +86,11 @@
             }
         }
 
-        /* 滚动条美化 */
         ::-webkit-scrollbar { width: 4px; }
         ::-webkit-scrollbar-track { background: #1e293b; }
         ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
         ::-webkit-scrollbar-thumb:hover { background: #64748b; }
 
-        /* 日志滚动优化：防止滚动日志时触发页面滚动 */
         .log-scroll-container {
             overscroll-behavior: contain;
             -webkit-overflow-scrolling: touch;
@@ -224,11 +217,7 @@
                     <label class="text-xs md:text-sm text-slate-300">系统电压(V)</label>
                     <input type="number" id="cfgSysVoltage" value="3.3" class="w-16 bg-slate-700 border border-slate-600 rounded px-1 py-1 text-xs text-center text-emerald-300" onchange="updateSettings()">
                 </div>
-                <div class="flex items-center justify-between">
-                    <label class="text-xs md:text-sm text-slate-300">基准电压(V)</label>
-                    <input type="number" id="cfgBiasVoltage" value="1.65" class="w-16 bg-slate-700 border border-slate-600 rounded px-1 py-1 text-xs text-center text-emerald-300" onchange="updateSettings()">
                 </div>
-            </div>
         </div>
 
         <div class="bg-slate-800/50 p-3 md:p-4 rounded border border-slate-700 flex flex-col order-5">
@@ -254,13 +243,11 @@
         let globalConfig = {
             adcMax: 4095,
             sysVoltage: 3.3,
-            biasVoltage: 1.65,
             scaleX: 1
         };
 
         const CANVAS_BG = '#000000';
         const GRID_COLOR = '#1e293b';
-        const ZERO_LINE_COLOR = '#475569';
         const LINE_COLOR = '#10b981';
         const MAX_HISTORY = 20000;
         const BASE_VIEW_WIDTH = 1000;
@@ -322,16 +309,13 @@
         function updateSettings() {
             globalConfig.adcMax = parseFloat(document.getElementById('cfgAdcMax').value) || 4095;
             globalConfig.sysVoltage = parseFloat(document.getElementById('cfgSysVoltage').value) || 3.3;
-            globalConfig.biasVoltage = parseFloat(document.getElementById('cfgBiasVoltage').value) || 1.65;
             globalConfig.scaleX = parseFloat(document.getElementById('scaleX').value) || 1;
             if(isPaused) updateSliderRange();
         }
 
+        // 统一为物理电压转换逻辑，不再计算 bias
         function adcToPhys(adcVal) {
             return (adcVal / globalConfig.adcMax) * globalConfig.sysVoltage;
-        }
-        function adcToDisplay(adcVal) {
-            return adcToPhys(adcVal) - globalConfig.biasVoltage;
         }
 
         function draw() {
@@ -366,17 +350,14 @@
             let startIndex = endIndex - pointsToRender;
             if (startIndex < 0) startIndex = 0;
 
-            const yMax = globalConfig.sysVoltage - globalConfig.biasVoltage;
-            const yMin = 0 - globalConfig.biasVoltage;
-            const yRange = globalConfig.sysVoltage;
-
+            // 0-3.3V 归一化映射逻辑
             for (let i = startIndex; i < endIndex; i++) {
                 if (i >= dataBuffer.length) break;
                 const x = (i - startIndex) * step;
-                const displayVal = adcToDisplay(dataBuffer[i]);
-                let normalizedY = (displayVal - yMin) / yRange;
+                const physVal = adcToPhys(dataBuffer[i]);
+                let normalizedY = physVal / globalConfig.sysVoltage;
                 normalizedY = Math.max(0, Math.min(1, normalizedY));
-                const y = height * (1 - normalizedY);
+                const y = height * (1 - normalizedY); // 顶部是 3.3V，底部是 0V
                 if (i === startIndex) ctx.moveTo(x, y);
                 else ctx.lineTo(x, y);
             }
@@ -388,18 +369,16 @@
         }
 
         function drawGrid(w, h) {
-            const yMin = 0 - globalConfig.biasVoltage;
-            const yRange = globalConfig.sysVoltage;
-            
+            // 网格从 0V 开始均匀分布到最大系统电压
             for (let i = 0; i <= 5; i++) {
                 const ratio = i / 5;
                 const y = h * (1 - ratio);
-                const val = yMin + (ratio * yRange);
-                const isZeroLine = Math.abs(val) < (yRange * 0.01);
+                const val = ratio * globalConfig.sysVoltage;
+                const isZeroLine = i === 0; // 最底部线为 0V 基准线
 
                 ctx.lineWidth = isZeroLine ? 2 : 1;
                 ctx.strokeStyle = isZeroLine ? '#94a3b8' : GRID_COLOR;
-                ctx.setLineDash(isZeroLine ? [5, 3] : []);
+                ctx.setLineDash(isZeroLine ? [] : [4, 4]); // 虚线效果更美观
 
                 ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
                 ctx.fillStyle = isZeroLine ? '#cbd5e1' : '#64748b';
@@ -440,7 +419,7 @@
             }
             packetCount++;
             if (!isPaused && packetCount % 5 === 0) {
-                const displayV = adcToDisplay(val).toFixed(2);
+                const displayV = adcToPhys(val).toFixed(2);
                 document.getElementById('valAdc').innerText = val;
                 document.getElementById('valVoltage').innerText = displayV + " V";
                 updateStatsForRange(Math.max(0, dataBuffer.length - 200), dataBuffer.length);
@@ -452,7 +431,7 @@
             if (viewData.length > 0) {
                 let min = 9999, max = -9999, sum = 0;
                 viewData.forEach(adc => {
-                    const v = adcToDisplay(adc);
+                    const v = adcToPhys(adc);
                     if(v < min) min = v;
                     if(v > max) max = v;
                     sum += v;
@@ -598,7 +577,7 @@
             if (idx >= 0 && idx < dataBuffer.length) {
                 const val = dataBuffer[idx];
                 document.getElementById('valAdc').innerText = val;
-                document.getElementById('valVoltage').innerText = adcToDisplay(val).toFixed(2) + " V";
+                document.getElementById('valVoltage').innerText = adcToPhys(val).toFixed(2) + " V";
             }
         }
 
@@ -637,14 +616,19 @@
                 let t = 0;
                 simInterval = setInterval(() => {
                     t += 0.1;
-                    let signal = 2048; 
-                    if (t % 10 > 3.5 && t % 10 < 4.5) {
-                        if (t % 10 < 3.8) signal -= 200; 
-                        else if (t % 10 < 4.2) signal += 1000; 
-                        else signal -= 300; 
+                    // 模拟生成 0V ~ 3.3V 的直流偏置加正弦波形
+                    let baseSignal = 2048; // 1.65V 中间值
+                    let sineWave = Math.sin(t) * 1000; // 幅度约为 0.8V 的正弦波
+                    
+                    // 模拟突变脉冲
+                    let pulse = 0;
+                    if (t % 10 > 4.0 && t % 10 < 4.5) {
+                        pulse = 800; 
                     }
-                    const noise = Math.random() * 40 - 20;
-                    pushData(Math.floor(Math.max(0, Math.min(4095, signal + noise))));
+                    
+                    const noise = Math.random() * 30 - 15;
+                    let finalAdc = Math.floor(Math.max(0, Math.min(4095, baseSignal + sineWave + pulse + noise)));
+                    pushData(finalAdc);
                 }, 20);
                 log('模拟模式已开启', 'info');
             } else {
