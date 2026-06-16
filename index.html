@@ -106,7 +106,6 @@
 </head>
 <body class="min-h-screen md:h-screen flex flex-col p-2 md:p-4">
 
-    <!-- 顶部栏 -->
     <header class="flex flex-wrap justify-between items-center mb-3 md:mb-4 gap-2">
         <div class="flex items-center">
             <h1 class="text-lg md:text-2xl font-bold neon-text text-emerald-400 truncate">我测</h1>
@@ -117,31 +116,26 @@
                 <span class="status-dot status-disconnected" id="statusDot"></span>
                 <span id="statusText">未连接</span>
             </div>
-            <!-- 蓝牙连接按钮：改为 toggleBluetooth -->
             <button onclick="toggleBluetooth()" id="btnBle" class="bg-blue-600 active:bg-blue-800 hover:bg-blue-700 text-white px-3 py-2 md:px-4 md:py-2 rounded text-xs md:text-sm transition flex items-center gap-1 shadow-lg shadow-blue-900/20 w-20 justify-center">
                 <svg id="iconBleConnect" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 7 10 10-5 5V2l5 5L7 17"/></svg>
                 <svg id="iconBleDisconnect" class="hidden" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
                 <span id="txtBle">配对</span>
             </button>
-            <!-- WS连接按钮：重新加上了 hidden md:block，手机端隐藏 -->
             <button onclick="toggleWSConnection()" id="connectBtn" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded text-sm transition hidden md:block">
                 WS连接
             </button>
         </div>
     </header>
 
-    <!-- 主视图 (波形) -->
     <div class="canvas-container mb-3 md:mb-4 relative group">
         <canvas id="oscilloscope"></canvas>
         
-        <!-- 悬浮数值显示 -->
         <div class="absolute top-2 right-2 text-right bg-black/60 p-2 rounded backdrop-blur-sm border border-slate-700 pointer-events-none z-10">
             <div class="text-[10px] text-slate-400">实时信号</div>
             <div class="text-xl md:text-2xl font-bold text-emerald-400" id="valVoltage">0.00 V</div>
             <div class="text-[10px] text-slate-500 mt-0.5">ADC: <span id="valAdc">N/A</span></div>
         </div>
 
-        <!-- 暂停时的提示覆盖层 -->
         <div id="pauseOverlay" class="hidden absolute inset-0 bg-black/20 backdrop-blur-[2px] flex items-center justify-center pointer-events-none z-20">
             <div class="bg-slate-900/80 px-4 py-2 rounded border border-emerald-500/50 text-emerald-400 font-bold tracking-widest text-sm md:text-base">
                 已暂停 - 数据停止接收
@@ -149,17 +143,14 @@
         </div>
     </div>
 
-    <!-- 底部控制 (可滚动区域) -->
     <div class="control-panel grid grid-cols-1 md:grid-cols-5 gap-3 md:gap-4 pb-4 md:pb-0 md:flex-1">
         
-        <!-- 1. 蓝牙配置与发送 -->
         <div class="bg-slate-800/50 p-3 md:p-4 rounded border border-blue-900/50 md:col-span-1 flex flex-col order-1">
             <h3 class="text-blue-400 text-xs md:text-sm mb-2 border-b border-slate-700 pb-2 flex justify-between font-bold">
                 <span>蓝牙透传 (BLE)</span>
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path></svg>
             </h3>
             <div class="space-y-3 flex-1">
-                <!-- UUID 配置 -->
                 <div class="grid grid-cols-2 gap-2">
                     <div class="space-y-1">
                         <label class="text-[10px] text-slate-400 block">Service UUID</label>
@@ -171,7 +162,6 @@
                     </div>
                 </div>
                 
-                <!-- 发送数据 -->
                 <div class="pt-2 border-t border-slate-700">
                     <label class="text-[10px] text-slate-400 block mb-1">发送指令</label>
                     <div class="flex gap-2">
@@ -182,7 +172,6 @@
             </div>
         </div>
 
-        <!-- 2. 显控设置 (移动端排第二) -->
         <div class="bg-slate-800/50 p-3 md:p-4 rounded border border-slate-700 order-2">
             <h3 class="text-slate-400 text-xs md:text-sm mb-2 border-b border-slate-700 pb-2 font-bold">显示控制</h3>
             <div class="space-y-4 md:space-y-3">
@@ -203,7 +192,6 @@
                     <style>.toggle-checkbox:checked { right: 0; left: auto; border-color: #10B981; } .toggle-checkbox:checked + .toggle-label { background-color: #10B981; }</style>
                 </div>
                 
-                <!-- 历史回放滑块 -->
                 <div id="historyControl" class="hidden pt-2 border-t border-slate-700/50">
                     <div class="flex justify-between text-[10px] text-slate-400 mb-1">
                         <span>旧数据</span>
@@ -215,7 +203,6 @@
             </div>
         </div>
 
-        <!-- 3. 统计 (移动端一行两个) -->
         <div class="bg-slate-800/50 p-3 md:p-4 rounded border border-slate-700 order-3">
             <h3 class="text-slate-400 text-xs md:text-sm mb-2 border-b border-slate-700 pb-2 font-bold">信号统计</h3>
             <div class="grid grid-cols-4 md:grid-cols-2 gap-2 text-xs md:text-sm text-center md:text-left">
@@ -226,7 +213,6 @@
             </div>
         </div>
 
-        <!-- 4. 物理参数配置 -->
         <div class="bg-slate-800/50 p-3 md:p-4 rounded border border-slate-700 order-4">
             <h3 class="text-slate-400 text-xs md:text-sm mb-2 border-b border-slate-700 pb-2 font-bold">量程配置</h3>
             <div class="space-y-2">
@@ -245,11 +231,9 @@
             </div>
         </div>
 
-        <!-- 5. 数据操作与日志 -->
         <div class="bg-slate-800/50 p-3 md:p-4 rounded border border-slate-700 flex flex-col order-5">
             <h3 class="text-slate-400 text-xs md:text-sm mb-2 border-b border-slate-700 pb-2 font-bold flex justify-between items-center">
                 <span>操作 & 日志</span>
-                <!-- 清除日志按钮 -->
                 <button onclick="clearLog()" class="text-[10px] text-slate-500 hover:text-red-400 transition">[清除日志]</button>
             </h3>
             <div class="flex gap-2 mb-2">
@@ -260,7 +244,6 @@
                  <label class="text-xs text-slate-400">模拟模式</label>
                  <input type="checkbox" id="simToggle" class="w-4 h-4 accent-emerald-500" onchange="toggleSimulation()">
             </div>
-            <!-- 修改了高度 h-32 并添加了 log-scroll-container -->
             <div id="consoleLog" class="log-scroll-container flex-1 overflow-y-auto text-[10px] md:text-xs font-mono text-slate-400 space-y-1 h-32 md:h-auto scrollbar-thin scrollbar-thumb-slate-600 bg-black/20 p-1 rounded">
                 <div class="text-yellow-500">> 系统就绪</div>
             </div>
@@ -268,11 +251,10 @@
     </div>
 
     <script>
-        // === 核心配置 ===
         let globalConfig = {
-            adcMax: 4095,      // ADC最大值
-            sysVoltage: 3.3,   // 系统电压
-            biasVoltage: 1.65, // 基准电压 (显示为0)
+            adcMax: 4095,
+            sysVoltage: 3.3,
+            biasVoltage: 1.65,
             scaleX: 1
         };
 
@@ -296,10 +278,9 @@
         let frozenLength = 0;
         let historyOffset = 0;
 
-        // === 蓝牙变量 ===
         let bleDevice = null;
-        let bleCharacteristic = null; // 用于读写
-        let bleWriter = null; // 专门用于写
+        let bleCharacteristic = null;
+        let bleWriter = null;
         const textDecoder = new TextDecoder();
         const textEncoder = new TextEncoder();
 
@@ -308,28 +289,21 @@
         const logPanel = document.getElementById('consoleLog');
         const historySlider = document.getElementById('historySlider');
 
-        // === 初始化 ===
         function resizeCanvas() {
-            // 确保canvas分辨率与显示尺寸匹配，防止模糊
             const dpr = window.devicePixelRatio || 1;
             const rect = canvas.parentElement.getBoundingClientRect();
             
             canvas.width = rect.width * dpr;
             canvas.height = rect.height * dpr;
-            
-            // 缩放绘图上下文，使得绘图逻辑不需要关心DPR
             ctx.scale(dpr, dpr);
             
-            // 记录逻辑宽高供绘图使用
             canvas.logicalWidth = rect.width;
             canvas.logicalHeight = rect.height;
         }
         window.addEventListener('resize', resizeCanvas);
-        // 延迟一下确保布局完成
         setTimeout(resizeCanvas, 100);
         updateSettings();
 
-        // 日志辅助
         function log(msg, type='info') {
             const div = document.createElement('div');
             const time = new Date().toLocaleTimeString().split(' ')[0];
@@ -341,7 +315,6 @@
             logPanel.scrollTop = logPanel.scrollHeight;
         }
 
-        // 清除日志
         function clearLog() {
             logPanel.innerHTML = '<div class="text-slate-600 italic">> 日志已清除</div>';
         }
@@ -361,7 +334,6 @@
             return adcToPhys(adcVal) - globalConfig.biasVoltage;
         }
 
-        // === 绘图逻辑 ===
         function draw() {
             requestAnimationFrame(draw);
             const effectiveLength = isPaused ? frozenLength : dataBuffer.length;
@@ -371,7 +343,6 @@
             const height = canvas.logicalHeight;
 
             ctx.fillStyle = CANVAS_BG;
-            // 清除整个区域 (使用逻辑坐标)
             ctx.fillRect(0, 0, width, height);
             drawGrid(width, height);
 
@@ -385,8 +356,7 @@
             ctx.beginPath();
             ctx.strokeStyle = LINE_COLOR;
             ctx.lineWidth = 2;
-            ctx.shadowBlur = 0; // 移动端关闭阴影以提高性能
-            // ctx.shadowColor = LINE_COLOR;
+            ctx.shadowBlur = 0;
 
             const pointsToRender = Math.floor(BASE_VIEW_WIDTH / globalConfig.scaleX);
             const step = width / pointsToRender;
@@ -400,7 +370,6 @@
             const yMin = 0 - globalConfig.biasVoltage;
             const yRange = globalConfig.sysVoltage;
 
-            // 批量绘制路径
             for (let i = startIndex; i < endIndex; i++) {
                 if (i >= dataBuffer.length) break;
                 const x = (i - startIndex) * step;
@@ -446,9 +415,7 @@
             }
         }
 
-        // === 数据处理 ===
         function handleIncomingData(chunk) {
-            // 如果暂停，直接丢弃新数据，实现“数据停止”
             if (isPaused) return;
 
             incomingBuffer += chunk;
@@ -469,9 +436,7 @@
         function pushData(val) {
             dataBuffer.push(val);
             if (dataBuffer.length > MAX_HISTORY) {
-                const removedCount = dataBuffer.length - MAX_HISTORY;
                 dataBuffer.shift(); 
-                // 注意：由于暂停时不再pushData，这里的逻辑仅在运行时有效
             }
             packetCount++;
             if (!isPaused && packetCount % 5 === 0) {
@@ -499,18 +464,12 @@
                 document.getElementById('statCount').innerText = viewData.length;
             }
         }
-
-        // === 蓝牙核心逻辑 (新增断开功能) ===
         
-        // 统一入口函数
         async function toggleBluetooth() {
             if (isConnected && bleDevice && bleDevice.gatt.connected) {
-                // 如果已连接，则断开
                 log('正在断开蓝牙...', 'info');
                 bleDevice.gatt.disconnect();
-                // onBleDisconnected 会被触发来更新UI
             } else {
-                // 如果未连接，则连接
                 connectBluetooth();
             }
         }
@@ -543,8 +502,6 @@
 
                 const service = await server.getPrimaryService(srvUuid);
 
-                // === 针对 VG6328A 分离读写通道 ===
-                // 1. 获取写特征 (FFE1)，用于发送指令
                 try {
                     bleWriter = await service.getCharacteristic(0xFFE1);
                     log('发送通道就绪 (FFE1)', 'success');
@@ -552,7 +509,6 @@
                     log('警告: 无法获取写通道', 'error');
                 }
 
-                // 2. 获取通知特征 (FFE2)，用于接收波形
                 bleCharacteristic = await service.getCharacteristic(0xFFE2);
                 await bleCharacteristic.startNotifications();
 
@@ -604,14 +560,12 @@
             }
         }
 
-        // === 辅助功能 ===
         function togglePauseMode() {
             isPaused = document.getElementById('pauseToggle').checked;
             const overlay = document.getElementById('pauseOverlay');
             const historyDiv = document.getElementById('historyControl');
             
             if (isPaused) {
-                // 暂停时锁定长度，之后的 incoming data 将被丢弃
                 frozenLength = dataBuffer.length;
                 historyOffset = 0;
                 overlay.classList.remove('hidden');
@@ -721,7 +675,6 @@
             const iconDisconnect = document.getElementById('iconBleDisconnect');
             const txtBle = document.getElementById('txtBle');
             
-            // Reset base
             dot.className = 'status-dot'; 
             
             if (status === 'connected') { 
@@ -729,7 +682,6 @@
             }
             else if (status === 'ble') { 
                 dot.classList.add('status-ble'); text.innerText = 'BLE 在线';
-                // 变更为红色断开样式
                 btn.className = "bg-red-600 active:bg-red-800 hover:bg-red-700 text-white px-3 py-2 md:px-4 md:py-2 rounded text-xs md:text-sm transition flex items-center gap-1 shadow-lg shadow-red-900/20 w-20 justify-center";
                 iconConnect.classList.add('hidden');
                 iconDisconnect.classList.remove('hidden');
@@ -740,7 +692,6 @@
             }
             else { 
                 dot.classList.add('status-disconnected'); text.innerText = '离线'; 
-                // 恢复蓝色连接样式
                 btn.className = "bg-blue-600 active:bg-blue-800 hover:bg-blue-700 text-white px-3 py-2 md:px-4 md:py-2 rounded text-xs md:text-sm transition flex items-center gap-1 shadow-lg shadow-blue-900/20 w-20 justify-center";
                 iconConnect.classList.remove('hidden');
                 iconDisconnect.classList.add('hidden');
