@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>我测 (移动端优化版)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+        
+        /* 基础样式调整 */
+        body {
+            background-color: #0f172a;
+            color: #e2e8f0;
+            font-family: 'JetBrains Mono', monospace;
+            /* 移动端允许滚动，桌面端固定 */
+            overflow-y: auto; 
+            -webkit-tap-highlight-color: transparent; /* 移除点击高亮 */
+        }
+
+        /* 桌面端大屏锁定滚动，类似App体验 */
+        @media (min-width: 768px) {
+            body {
+                overflow: hidden;
+            }
+        }
+
+        .canvas-container {
+            position: relative;
+            width: 100%;
+            /* 移动端高度较小，桌面端较大 */
+            height: 35vh; 
+            background: #000;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            box-shadow: 0 0 20px rgba(16, 185, 129, 0.1);
+            flex-shrink: 0; /* 防止被压缩 */
+        }
+
+        @media (min-width: 768px) {
+            .canvas-container {
+                height: 55vh;
+            }
+        }
+
+        canvas { display: block; width: 100%; height: 100%; }
+        
+        .neon-text { text-shadow: 0 0 5px rgba(52, 211, 153, 0.5); }
+
+        .status-dot {
+            height: 8px; width: 8px; border-radius: 50%; display: inline-block; margin-right: 6px;
+        }
+        .status-connected { background-color: #10b981; box-shadow: 0 0 8px #10b981; }
+        .status-ble { background-color: #3b82f6; box-shadow: 0 0 8px #3b82f6; }
+        .status-disconnected { background-color: #ef4444; box-shadow: 0 0 8px #ef4444; }
+        .status-simulation { background-color: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
+
+        /* 控制面板：移动端自动高度，桌面端滚动 */
+        .control-panel { 
+            height: auto; 
+            overflow-y: visible; 
+        } 
+        
+        @media (min-width: 768px) {
+            .control-panel {
+                height: 100%; /* 填充剩余空间 */
+                overflow-y: auto;
+            }
+        }
+        
+        input[type="number"]::-webkit-inner-spin-button,
+        input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+        
+        input[type=range] { -webkit-appearance: none; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 18px; width: 18px; border-radius: 50%;
+            background: #10b981; cursor: pointer; margin-top: -7px; 
+            box-shadow: 0 0 2px rgba(0,0,0,0.5);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px;
+        }
+        
+        /* 针对iOS输入框字体小于16px时会自动放大的修复 */
+        input[type="text"], input[type="number"] {
+            font-size: 16px; 
+        }
+        @media (min-width: 768px) {
+            input[type="text"], input[type="number"] {
+                font-size: 12px;
+            }
+        }
+
+        /* 滚动条美化 */
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+
+        /* 日志滚动优化：防止滚动日志时触发页面滚动 */
+        .log-scroll-container {
+            overscroll-behavior: contain;
+            -webkit-overflow-scrolling: touch;
+        }
+    </style>
+</head>
+<body class="min-h-screen md:h-screen flex flex-col p-2 md:p-4">
+
+    <!-- 顶部栏 -->
+    <header class="flex flex-wrap justify-between items-center mb-3 md:mb-4 gap-2">
+        <div class="flex items-center">
+            <h1 class="text-lg md:text-2xl font-bold neon-text text-emerald-400 truncate">我测</h1>
+            <span class="ml-2 text-[10px] md:text-xs bg-slate-800 px-2 py-1 rounded text-slate-400 hidden sm:inline-block">BLE Ready</span>
+        </div>
+        <div class="flex items-center space-x-3 ml-auto">
+            <div id="connectionStatus" class="flex items-center text-xs md:text-sm">
+                <span class="status-dot status-disconnected" id="statusDot"></span>
+                <span id="statusText">未连接</span>
+            </div>
+            <!-- 蓝牙连接按钮：改为 toggleBluetooth -->
+            <button onclick="toggleBluetooth()" id="btnBle" class="bg-blue-600 active:bg-blue-800 hover:bg-blue-700 text-white px-3 py-2 md:px-4 md:py-2 rounded text-xs md:text-sm transition flex items-center gap-1 shadow-lg shadow-blue-900/20 w-20 justify-center">
+                <svg id="iconBleConnect" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 7 10 10-5 5V2l5 5L7 17"/></svg>
+                <svg id="iconBleDisconnect" class="hidden" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+                <span id="txtBle">配对</span>
+            </button>
+            <!-- WS连接按钮：重新加上了 hidden md:block，手机端隐藏 -->
+            <button onclick="toggleWSConnection()" id="connectBtn" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded text-sm transition hidden md:block">
+                WS连接
+            </button>
+        </div>
+    </header>
+
+    <!-- 主视图 (波形) -->
+    <div class="canvas-container mb-3 md:mb-4 relative group">
+        <canvas id="oscilloscope"></canvas>
+        
+        <!-- 悬浮数值显示 -->
+        <div class="absolute top-2 right-2 text-right bg-black/60 p-2 rounded backdrop-blur-sm border border-slate-700 pointer-events-none z-10">
+            <div class="text-[10px] text-slate-400">实时信号</div>
+            <div class="text-xl md:text-2xl font-bold text-emerald-400" id="valVoltage">0.00 V</div>
+            <div class="text-[10px] text-slate-500 mt-0.5">ADC: <span id="valAdc">N/A</span></div>
+        </div>
+
+        <!-- 暂停时的提示覆盖层 -->
+        <div id="pauseOverlay" class="hidden absolute inset-0 bg-black/20 backdrop-blur-[2px] flex items-center justify-center pointer-events-none z-20">
+            <div class="bg-slate-900/80 px-4 py-2 rounded border border-emerald-500/50 text-emerald-400 font-bold tracking-widest text-sm md:text-base">
+                已暂停 - 数据停止接收
+            </div>
+        </div>
+    </div>
+
+    <!-- 底部控制 (可滚动区域) -->
+    <div class="control-panel grid grid-cols-1 md:grid-cols-5 gap-3 md:gap-4 pb-4 md:pb-0 md:flex-1">
+        
+        <!-- 1. 蓝牙配置与发送 -->
+        <div class="bg-slate-800/50 p-3 md:p-4 rounded border border-blue-900/50 md:col-span-1 flex flex-col order-1">
+            <h3 class="text-blue-400 text-xs md:text-sm mb-2 border-b border-slate-700 pb-2 flex justify-between font-bold">
+                <span>蓝牙透传 (BLE)</span>
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path></svg>
+            </h3>
+            <div class="space-y-3 flex-1">
+                <!-- UUID 配置 -->
+                <div class="grid grid-cols-2 gap-2">
+                    <div class="space-y-1">
+                        <label class="text-[10px] text-slate-400 block">Service UUID</label>
+                        <input type="text" id="bleServiceId" value="ffe0" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 md:py-1 text-blue-200 focus:border-blue-500 outline-none text-center font-mono">
+                    </div>
+                    <div class="space-y-1">
+                        <label class="text-[10px] text-slate-400 block">Char UUID</label>
+                        <input type="text" id="bleCharId" value="ffe1" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 md:py-1 text-blue-200 focus:border-blue-500 outline-none text-center font-mono">
+                    </div>
+                </div>
+                
+                <!-- 发送数据 -->
+                <div class="pt-2 border-t border-slate-700">
+                    <label class="text-[10px] text-slate-400 block mb-1">发送指令</label>
+                    <div class="flex gap-2">
+                        <input type="text" id="bleSendInput" placeholder="CMD" class="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-2 md:py-1 text-slate-200 focus:border-blue-500 outline-none">
+                        <button onclick="sendBleData()" class="bg-blue-600 active:bg-blue-700 text-white px-4 py-1 rounded text-xs font-bold">发送</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. 显控设置 (移动端排第二) -->
+        <div class="bg-slate-800/50 p-3 md:p-4 rounded border border-slate-700 order-2">
+            <h3 class="text-slate-400 text-xs md:text-sm mb-2 border-b border-slate-700 pb-2 font-bold">显示控制</h3>
+            <div class="space-y-4 md:space-y-3">
+                <div class="flex items-center justify-between">
+                    <label class="text-xs md:text-sm text-slate-300">X轴缩放</label>
+                    <div class="flex items-center gap-2 flex-1 ml-4">
+                        <span class="text-[10px] text-slate-500">密</span>
+                        <input type="range" min="0.5" max="10" step="0.5" value="1" class="flex-1" id="scaleX" oninput="updateSettings()">
+                        <span class="text-[10px] text-slate-500">疏</span>
+                    </div>
+                </div>
+                <div class="flex items-center justify-between bg-slate-900/50 p-2 rounded">
+                    <label class="text-xs md:text-sm text-slate-300">暂停 / 冻结</label>
+                    <div class="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in">
+                        <input type="checkbox" id="pauseToggle" class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer" style="top:0; left:0;" onchange="togglePauseMode()"/>
+                        <label for="pauseToggle" class="toggle-label block overflow-hidden h-5 rounded-full bg-slate-600 cursor-pointer"></label>
+                    </div>
+                    <style>.toggle-checkbox:checked { right: 0; left: auto; border-color: #10B981; } .toggle-checkbox:checked + .toggle-label { background-color: #10B981; }</style>
+                </div>
+                
+                <!-- 历史回放滑块 -->
+                <div id="historyControl" class="hidden pt-2 border-t border-slate-700/50">
+                    <div class="flex justify-between text-[10px] text-slate-400 mb-1">
+                        <span>旧数据</span>
+                        <span>最新</span>
+                    </div>
+                    <input type="range" id="historySlider" min="0" max="0" value="0" class="w-full" oninput="onHistoryScroll()">
+                    <div class="text-center text-xs text-emerald-500 mt-1" id="historyLabel">当前视窗</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. 统计 (移动端一行两个) -->
+        <div class="bg-slate-800/50 p-3 md:p-4 rounded border border-slate-700 order-3">
+            <h3 class="text-slate-400 text-xs md:text-sm mb-2 border-b border-slate-700 pb-2 font-bold">信号统计</h3>
+            <div class="grid grid-cols-4 md:grid-cols-2 gap-2 text-xs md:text-sm text-center md:text-left">
+                <div class="bg-slate-900/50 p-1 rounded"><div class="text-[10px] text-slate-500">最大</div><div class="text-emerald-300 font-mono" id="statMax">0</div></div>
+                <div class="bg-slate-900/50 p-1 rounded"><div class="text-[10px] text-slate-500">最小</div><div class="text-emerald-300 font-mono" id="statMin">0</div></div>
+                <div class="bg-slate-900/50 p-1 rounded"><div class="text-[10px] text-slate-500">平均</div><div class="text-emerald-300 font-mono" id="statAvg">0</div></div>
+                <div class="bg-slate-900/50 p-1 rounded"><div class="text-[10px] text-slate-500">点数</div><div class="text-emerald-300 font-mono" id="statCount">0</div></div>
+            </div>
+        </div>
+
+        <!-- 4. 物理参数配置 -->
+        <div class="bg-slate-800/50 p-3 md:p-4 rounded border border-slate-700 order-4">
+            <h3 class="text-slate-400 text-xs md:text-sm mb-2 border-b border-slate-700 pb-2 font-bold">量程配置</h3>
+            <div class="space-y-2">
+                <div class="flex items-center justify-between">
+                    <label class="text-xs md:text-sm text-slate-300">ADC分辨率</label>
+                    <input type="number" id="cfgAdcMax" value="4095" class="w-16 bg-slate-700 border border-slate-600 rounded px-1 py-1 text-xs text-center text-emerald-300" onchange="updateSettings()">
+                </div>
+                <div class="flex items-center justify-between">
+                    <label class="text-xs md:text-sm text-slate-300">系统电压(V)</label>
+                    <input type="number" id="cfgSysVoltage" value="3.3" class="w-16 bg-slate-700 border border-slate-600 rounded px-1 py-1 text-xs text-center text-emerald-300" onchange="updateSettings()">
+                </div>
+                <div class="flex items-center justify-between">
+                    <label class="text-xs md:text-sm text-slate-300">基准电压(V)</label>
+                    <input type="number" id="cfgBiasVoltage" value="1.65" class="w-16 bg-slate-700 border border-slate-600 rounded px-1 py-1 text-xs text-center text-emerald-300" onchange="updateSettings()">
+                </div>
+            </div>
+        </div>
+
+        <!-- 5. 数据操作与日志 -->
+        <div class="bg-slate-800/50 p-3 md:p-4 rounded border border-slate-700 flex flex-col order-5">
+            <h3 class="text-slate-400 text-xs md:text-sm mb-2 border-b border-slate-700 pb-2 font-bold flex justify-between items-center">
+                <span>操作 & 日志</span>
+                <!-- 清除日志按钮 -->
+                <button onclick="clearLog()" class="text-[10px] text-slate-500 hover:text-red-400 transition">[清除日志]</button>
+            </h3>
+            <div class="flex gap-2 mb-2">
+                 <button onclick="clearWaveform()" class="flex-1 bg-slate-700 active:bg-slate-600 text-slate-200 text-xs py-2 rounded border border-slate-600">清空数据</button>
+                 <button onclick="exportCSV()" class="flex-1 bg-blue-900/40 active:bg-blue-800/40 text-blue-200 text-xs py-2 rounded border border-blue-800">导出CSV</button>
+            </div>
+            <div class="flex items-center justify-between mb-2">
+                 <label class="text-xs text-slate-400">模拟模式</label>
+                 <input type="checkbox" id="simToggle" class="w-4 h-4 accent-emerald-500" onchange="toggleSimulation()">
+            </div>
+            <!-- 修改了高度 h-32 并添加了 log-scroll-container -->
+            <div id="consoleLog" class="log-scroll-container flex-1 overflow-y-auto text-[10px] md:text-xs font-mono text-slate-400 space-y-1 h-32 md:h-auto scrollbar-thin scrollbar-thumb-slate-600 bg-black/20 p-1 rounded">
+                <div class="text-yellow-500">> 系统就绪</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // === 核心配置 ===
+        let globalConfig = {
+            adcMax: 4095,      // ADC最大值
+            sysVoltage: 3.3,   // 系统电压
+            biasVoltage: 1.65, // 基准电压 (显示为0)
+            scaleX: 1
+        };
+
+        const CANVAS_BG = '#000000';
+        const GRID_COLOR = '#1e293b';
+        const ZERO_LINE_COLOR = '#475569';
+        const LINE_COLOR = '#10b981';
+        const MAX_HISTORY = 20000;
+        const BASE_VIEW_WIDTH = 1000;
+
+        let dataBuffer = []; 
+        let incomingBuffer = "";
+        
+        let ws = null;
+        let isConnected = false;
+        let isSimulation = false;
+        let isPaused = false;
+        let packetCount = 0;
+        let simInterval;
+        
+        let frozenLength = 0;
+        let historyOffset = 0;
+
+        // === 蓝牙变量 ===
+        let bleDevice = null;
+        let bleCharacteristic = null; // 用于读写
+        let bleWriter = null; // 专门用于写
+        const textDecoder = new TextDecoder();
+        const textEncoder = new TextEncoder();
+
+        const canvas = document.getElementById('oscilloscope');
+        const ctx = canvas.getContext('2d');
+        const logPanel = document.getElementById('consoleLog');
+        const historySlider = document.getElementById('historySlider');
+
+        // === 初始化 ===
+        function resizeCanvas() {
+            // 确保canvas分辨率与显示尺寸匹配，防止模糊
+            const dpr = window.devicePixelRatio || 1;
+            const rect = canvas.parentElement.getBoundingClientRect();
+            
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            
+            // 缩放绘图上下文，使得绘图逻辑不需要关心DPR
+            ctx.scale(dpr, dpr);
+            
+            // 记录逻辑宽高供绘图使用
+            canvas.logicalWidth = rect.width;
+            canvas.logicalHeight = rect.height;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        // 延迟一下确保布局完成
+        setTimeout(resizeCanvas, 100);
+        updateSettings();
+
+        // 日志辅助
+        function log(msg, type='info') {
+            const div = document.createElement('div');
+            const time = new Date().toLocaleTimeString().split(' ')[0];
+            div.innerText = `[${time}] ${msg}`;
+            if(type === 'error') div.className = 'text-red-400';
+            else if(type === 'success') div.className = 'text-emerald-400';
+            else if(type === 'ble') div.className = 'text-blue-400';
+            logPanel.appendChild(div);
+            logPanel.scrollTop = logPanel.scrollHeight;
+        }
+
+        // 清除日志
+        function clearLog() {
+            logPanel.innerHTML = '<div class="text-slate-600 italic">> 日志已清除</div>';
+        }
+
+        function updateSettings() {
+            globalConfig.adcMax = parseFloat(document.getElementById('cfgAdcMax').value) || 4095;
+            globalConfig.sysVoltage = parseFloat(document.getElementById('cfgSysVoltage').value) || 3.3;
+            globalConfig.biasVoltage = parseFloat(document.getElementById('cfgBiasVoltage').value) || 1.65;
+            globalConfig.scaleX = parseFloat(document.getElementById('scaleX').value) || 1;
+            if(isPaused) updateSliderRange();
+        }
+
+        function adcToPhys(adcVal) {
+            return (adcVal / globalConfig.adcMax) * globalConfig.sysVoltage;
+        }
+        function adcToDisplay(adcVal) {
+            return adcToPhys(adcVal) - globalConfig.biasVoltage;
+        }
+
+        // === 绘图逻辑 ===
+        function draw() {
+            requestAnimationFrame(draw);
+            const effectiveLength = isPaused ? frozenLength : dataBuffer.length;
+            if (!isPaused) historyOffset = 0;
+
+            const width = canvas.logicalWidth;
+            const height = canvas.logicalHeight;
+
+            ctx.fillStyle = CANVAS_BG;
+            // 清除整个区域 (使用逻辑坐标)
+            ctx.fillRect(0, 0, width, height);
+            drawGrid(width, height);
+
+            if (effectiveLength === 0) {
+                ctx.fillStyle = "#334155";
+                ctx.font = "14px JetBrains Mono";
+                ctx.fillText("等待数据...", width/2 - 40, height/2);
+                return;
+            }
+
+            ctx.beginPath();
+            ctx.strokeStyle = LINE_COLOR;
+            ctx.lineWidth = 2;
+            ctx.shadowBlur = 0; // 移动端关闭阴影以提高性能
+            // ctx.shadowColor = LINE_COLOR;
+
+            const pointsToRender = Math.floor(BASE_VIEW_WIDTH / globalConfig.scaleX);
+            const step = width / pointsToRender;
+
+            let endIndex = effectiveLength - historyOffset;
+            if (endIndex < 0) endIndex = 0;
+            let startIndex = endIndex - pointsToRender;
+            if (startIndex < 0) startIndex = 0;
+
+            const yMax = globalConfig.sysVoltage - globalConfig.biasVoltage;
+            const yMin = 0 - globalConfig.biasVoltage;
+            const yRange = globalConfig.sysVoltage;
+
+            // 批量绘制路径
+            for (let i = startIndex; i < endIndex; i++) {
+                if (i >= dataBuffer.length) break;
+                const x = (i - startIndex) * step;
+                const displayVal = adcToDisplay(dataBuffer[i]);
+                let normalizedY = (displayVal - yMin) / yRange;
+                normalizedY = Math.max(0, Math.min(1, normalizedY));
+                const y = height * (1 - normalizedY);
+                if (i === startIndex) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+
+            if (isPaused) {
+                updateStatsForRange(startIndex, endIndex);
+            }
+        }
+
+        function drawGrid(w, h) {
+            const yMin = 0 - globalConfig.biasVoltage;
+            const yRange = globalConfig.sysVoltage;
+            
+            for (let i = 0; i <= 5; i++) {
+                const ratio = i / 5;
+                const y = h * (1 - ratio);
+                const val = yMin + (ratio * yRange);
+                const isZeroLine = Math.abs(val) < (yRange * 0.01);
+
+                ctx.lineWidth = isZeroLine ? 2 : 1;
+                ctx.strokeStyle = isZeroLine ? '#94a3b8' : GRID_COLOR;
+                ctx.setLineDash(isZeroLine ? [5, 3] : []);
+
+                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+                ctx.fillStyle = isZeroLine ? '#cbd5e1' : '#64748b';
+                ctx.font = '10px sans-serif';
+                ctx.fillText(`${val.toFixed(2)}V`, 5, y - 5);
+            }
+            ctx.setLineDash([]);
+            ctx.strokeStyle = GRID_COLOR;
+            ctx.lineWidth = 1;
+            for (let i = 1; i < 10; i++) {
+                const x = (w / 10) * i;
+                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+            }
+        }
+
+        // === 数据处理 ===
+        function handleIncomingData(chunk) {
+            // 如果暂停，直接丢弃新数据，实现“数据停止”
+            if (isPaused) return;
+
+            incomingBuffer += chunk;
+            if (incomingBuffer.length > 5000) { incomingBuffer = ""; return; }
+            
+            let parts = incomingBuffer.split('\n');
+            incomingBuffer = parts.pop(); 
+
+            parts.forEach(part => {
+                const cleanStr = part.trim();
+                if (cleanStr.length > 0) {
+                    const val = parseInt(cleanStr);
+                    if (!isNaN(val) && val >= 0 && val <= 65535) pushData(val);
+                }
+            });
+        }
+
+        function pushData(val) {
+            dataBuffer.push(val);
+            if (dataBuffer.length > MAX_HISTORY) {
+                const removedCount = dataBuffer.length - MAX_HISTORY;
+                dataBuffer.shift(); 
+                // 注意：由于暂停时不再pushData，这里的逻辑仅在运行时有效
+            }
+            packetCount++;
+            if (!isPaused && packetCount % 5 === 0) {
+                const displayV = adcToDisplay(val).toFixed(2);
+                document.getElementById('valAdc').innerText = val;
+                document.getElementById('valVoltage').innerText = displayV + " V";
+                updateStatsForRange(Math.max(0, dataBuffer.length - 200), dataBuffer.length);
+            }
+        }
+
+        function updateStatsForRange(start, end) {
+            const viewData = dataBuffer.slice(start, end);
+            if (viewData.length > 0) {
+                let min = 9999, max = -9999, sum = 0;
+                viewData.forEach(adc => {
+                    const v = adcToDisplay(adc);
+                    if(v < min) min = v;
+                    if(v > max) max = v;
+                    sum += v;
+                });
+                const avg = sum / viewData.length;
+                document.getElementById('statMax').innerText = max.toFixed(2);
+                document.getElementById('statMin').innerText = min.toFixed(2);
+                document.getElementById('statAvg').innerText = avg.toFixed(2);
+                document.getElementById('statCount').innerText = viewData.length;
+            }
+        }
+
+        // === 蓝牙核心逻辑 (新增断开功能) ===
+        
+        // 统一入口函数
+        async function toggleBluetooth() {
+            if (isConnected && bleDevice && bleDevice.gatt.connected) {
+                // 如果已连接，则断开
+                log('正在断开蓝牙...', 'info');
+                bleDevice.gatt.disconnect();
+                // onBleDisconnected 会被触发来更新UI
+            } else {
+                // 如果未连接，则连接
+                connectBluetooth();
+            }
+        }
+
+        async function connectBluetooth() {
+            if (!navigator.bluetooth) {
+                alert("浏览器不支持蓝牙 API\n请使用 Chrome/Edge (Android/PC) 或 Bluefy (iOS)");
+                return;
+            }
+
+            let srvUuid = document.getElementById('bleServiceId').value.trim();
+            let charUuid = document.getElementById('bleCharId').value.trim();
+
+            if(!srvUuid.startsWith('0x') && srvUuid.length === 4) srvUuid = parseInt("0x"+srvUuid);
+            if(!charUuid.startsWith('0x') && charUuid.length === 4) charUuid = parseInt("0x"+charUuid);
+
+            try {
+                log('搜索设备中...', 'ble');
+                
+                bleDevice = await navigator.bluetooth.requestDevice({
+                    acceptAllDevices: true,
+                    optionalServices: [srvUuid]
+                });
+
+                log(`连接: ${bleDevice.name}`, 'ble');
+                bleDevice.addEventListener('gattserverdisconnected', onBleDisconnected);
+
+                const server = await bleDevice.gatt.connect();
+                log('已连接', 'ble');
+
+                const service = await server.getPrimaryService(srvUuid);
+
+                // === 针对 VG6328A 分离读写通道 ===
+                // 1. 获取写特征 (FFE1)，用于发送指令
+                try {
+                    bleWriter = await service.getCharacteristic(0xFFE1);
+                    log('发送通道就绪 (FFE1)', 'success');
+                } catch (e) {
+                    log('警告: 无法获取写通道', 'error');
+                }
+
+                // 2. 获取通知特征 (FFE2)，用于接收波形
+                bleCharacteristic = await service.getCharacteristic(0xFFE2);
+                await bleCharacteristic.startNotifications();
+
+                bleCharacteristic.addEventListener('characteristicvaluechanged', handleBleNotification);
+
+                isConnected = true;
+                updateStatusUI('ble');
+                log('开始接收数据', 'success');
+
+            } catch (error) {
+                if (error.name === 'SecurityError' && error.message.includes('permissions policy')) {
+                    log('环境限制: 预览窗口无法访问蓝牙', 'error');
+                    alert("⚠️ 无法在预览窗口中使用蓝牙\n\n请将此文件保存为html后，使用本地服务器运行，或在支持的手机浏览器中打开。");
+                } else {
+                    log(`错误: ${error.message}`, 'error');
+                }
+                isConnected = false;
+                updateStatusUI('disconnected');
+            }
+        }
+
+        function onBleDisconnected() {
+            log('蓝牙已断开', 'error');
+            isConnected = false;
+            updateStatusUI('disconnected');
+        }
+
+        function handleBleNotification(event) {
+            const value = event.target.value;
+            const textChunk = textDecoder.decode(value);
+            handleIncomingData(textChunk);
+        }
+
+        async function sendBleData() {
+            if (!bleDevice || !bleDevice.gatt.connected || !bleWriter) {
+                log('蓝牙未连接', 'error');
+                return;
+            }
+            const input = document.getElementById('bleSendInput');
+            const strToSend = input.value;
+            if (!strToSend) return;
+
+            try {
+                const data = textEncoder.encode(strToSend);
+                await bleWriter.writeValue(data);
+                log(`发送: ${strToSend}`, 'ble');
+            } catch (error) {
+                log(`发送失败: ${error}`, 'error');
+            }
+        }
+
+        // === 辅助功能 ===
+        function togglePauseMode() {
+            isPaused = document.getElementById('pauseToggle').checked;
+            const overlay = document.getElementById('pauseOverlay');
+            const historyDiv = document.getElementById('historyControl');
+            
+            if (isPaused) {
+                // 暂停时锁定长度，之后的 incoming data 将被丢弃
+                frozenLength = dataBuffer.length;
+                historyOffset = 0;
+                overlay.classList.remove('hidden');
+                historyDiv.classList.remove('hidden');
+                updateSliderRange();
+                historySlider.value = 0;
+            } else {
+                overlay.classList.add('hidden');
+                historyDiv.classList.add('hidden');
+                frozenLength = 0;
+                historyOffset = 0;
+            }
+        }
+
+        function updateSliderRange() {
+            if (!isPaused) return;
+            const pointsToRender = Math.floor(BASE_VIEW_WIDTH / globalConfig.scaleX);
+            const maxOffset = Math.max(0, frozenLength - pointsToRender);
+            historySlider.max = maxOffset;
+        }
+        
+        function onHistoryScroll() {
+            if (!isPaused) return;
+            const sliderMax = parseInt(historySlider.max);
+            const sliderVal = parseInt(historySlider.value);
+            historyOffset = sliderMax - sliderVal;
+            document.getElementById('historyLabel').innerText = historyOffset === 0 ? "冻结时刻" : `回溯: -${historyOffset}点`;
+            
+            const idx = frozenLength - historyOffset - 1;
+            if (idx >= 0 && idx < dataBuffer.length) {
+                const val = dataBuffer[idx];
+                document.getElementById('valAdc').innerText = val;
+                document.getElementById('valVoltage').innerText = adcToDisplay(val).toFixed(2) + " V";
+            }
+        }
+
+        function clearWaveform() {
+            dataBuffer = [];
+            packetCount = 0;
+            frozenLength = 0;
+            if (isPaused) { 
+                historySlider.max = 0; historySlider.value = 0; historyOffset = 0;
+            }
+            updateStatsForRange(0, 0);
+            log('数据已清空', 'info');
+        }
+
+        function exportCSV() {
+            if (dataBuffer.length === 0) return alert("无数据");
+            let csvContent = "data:text/csv;charset=utf-8,Index,Raw ADC,Phys Voltage (V)\n";
+            dataBuffer.forEach((val, index) => {
+                csvContent += `${index},${val},${adcToPhys(val).toFixed(4)}\n`;
+            });
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.href = encodedUri;
+            link.download = `ble_signal_${new Date().getTime()}.csv`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        function toggleSimulation() {
+            isSimulation = document.getElementById('simToggle').checked;
+            if (isSimulation) {
+                if(ws) ws.close();
+                if(bleDevice && bleDevice.gatt.connected) bleDevice.gatt.disconnect();
+                updateStatusUI('simulation');
+                let t = 0;
+                simInterval = setInterval(() => {
+                    t += 0.1;
+                    let signal = 2048; 
+                    if (t % 10 > 3.5 && t % 10 < 4.5) {
+                        if (t % 10 < 3.8) signal -= 200; 
+                        else if (t % 10 < 4.2) signal += 1000; 
+                        else signal -= 300; 
+                    }
+                    const noise = Math.random() * 40 - 20;
+                    pushData(Math.floor(Math.max(0, Math.min(4095, signal + noise))));
+                }, 20);
+                log('模拟模式已开启', 'info');
+            } else {
+                clearInterval(simInterval);
+                updateStatusUI('disconnected');
+                log('模拟模式已停止', 'info');
+            }
+        }
+
+        function toggleWSConnection() {
+            if (isSimulation) return alert("请先关闭模拟模式");
+            if (isConnected) {
+                if(ws) ws.close();
+                if(bleDevice && bleDevice.gatt.connected) bleDevice.gatt.disconnect();
+            } else {
+                try { ws = new WebSocket("ws://localhost:8081"); } catch (e) { return; }
+                ws.onopen = () => { isConnected = true; updateStatusUI('connected'); log('WS已连接', 'success'); };
+                ws.onmessage = (e) => handleIncomingData(e.data);
+                ws.onclose = () => { if(!bleDevice || !bleDevice.gatt.connected) { isConnected = false; updateStatusUI('disconnected'); }};
+            }
+        }
+
+        function updateStatusUI(status) {
+            const dot = document.getElementById('statusDot');
+            const text = document.getElementById('statusText');
+            const btn = document.getElementById('btnBle');
+            const iconConnect = document.getElementById('iconBleConnect');
+            const iconDisconnect = document.getElementById('iconBleDisconnect');
+            const txtBle = document.getElementById('txtBle');
+            
+            // Reset base
+            dot.className = 'status-dot'; 
+            
+            if (status === 'connected') { 
+                dot.classList.add('status-connected'); text.innerText = 'WS 在线'; 
+            }
+            else if (status === 'ble') { 
+                dot.classList.add('status-ble'); text.innerText = 'BLE 在线';
+                // 变更为红色断开样式
+                btn.className = "bg-red-600 active:bg-red-800 hover:bg-red-700 text-white px-3 py-2 md:px-4 md:py-2 rounded text-xs md:text-sm transition flex items-center gap-1 shadow-lg shadow-red-900/20 w-20 justify-center";
+                iconConnect.classList.add('hidden');
+                iconDisconnect.classList.remove('hidden');
+                txtBle.innerText = "断开";
+            }
+            else if (status === 'simulation') { 
+                dot.classList.add('status-simulation'); text.innerText = '模拟中'; 
+            }
+            else { 
+                dot.classList.add('status-disconnected'); text.innerText = '离线'; 
+                // 恢复蓝色连接样式
+                btn.className = "bg-blue-600 active:bg-blue-800 hover:bg-blue-700 text-white px-3 py-2 md:px-4 md:py-2 rounded text-xs md:text-sm transition flex items-center gap-1 shadow-lg shadow-blue-900/20 w-20 justify-center";
+                iconConnect.classList.remove('hidden');
+                iconDisconnect.classList.add('hidden');
+                txtBle.innerText = "配对";
+            }
+        }
+        
+        draw();
+    </script>
+</body>
+</html>
