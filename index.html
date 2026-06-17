@@ -3,12 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>我测 (单极性全正信号版)</title>
+    <title>我测</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
         
-        /* 基础样式调整 */
         body {
             background-color: #0f172a;
             color: #e2e8f0;
@@ -18,15 +17,13 @@
         }
 
         @media (min-width: 768px) {
-            body {
-                overflow: hidden;
-            }
+            body { overflow: hidden; }
         }
 
         .canvas-container {
             position: relative;
             width: 100%;
-            height: 35vh; 
+            height: 45vh; 
             background: #000;
             border: 1px solid #334155;
             border-radius: 8px;
@@ -35,35 +32,18 @@
         }
 
         @media (min-width: 768px) {
-            .canvas-container {
-                height: 55vh;
-            }
+            .canvas-container { height: 60vh; }
         }
 
         canvas { display: block; width: 100%; height: 100%; }
-        
         .neon-text { text-shadow: 0 0 5px rgba(52, 211, 153, 0.5); }
 
         .status-dot {
             height: 8px; width: 8px; border-radius: 50%; display: inline-block; margin-right: 6px;
         }
-        .status-connected { background-color: #10b981; box-shadow: 0 0 8px #10b981; }
         .status-ble { background-color: #3b82f6; box-shadow: 0 0 8px #3b82f6; }
         .status-disconnected { background-color: #ef4444; box-shadow: 0 0 8px #ef4444; }
-        .status-simulation { background-color: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
 
-        .control-panel { 
-            height: auto; 
-            overflow-y: visible; 
-        } 
-        
-        @media (min-width: 768px) {
-            .control-panel {
-                height: 100%; 
-                overflow-y: auto;
-            }
-        }
-        
         input[type="number"]::-webkit-inner-spin-button,
         input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
         
@@ -76,214 +56,134 @@
         input[type=range]::-webkit-slider-runnable-track {
             width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px;
         }
-        
-        input[type="text"], input[type="number"] {
-            font-size: 16px; 
-        }
-        @media (min-width: 768px) {
-            input[type="text"], input[type="number"] {
-                font-size: 12px;
-            }
-        }
-
-        ::-webkit-scrollbar { width: 4px; }
-        ::-webkit-scrollbar-track { background: #1e293b; }
-        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: #64748b; }
-
-        .log-scroll-container {
-            overscroll-behavior: contain;
-            -webkit-overflow-scrolling: touch;
-        }
     </style>
 </head>
 <body class="min-h-screen md:h-screen flex flex-col p-2 md:p-4">
 
-    <header class="flex flex-wrap justify-between items-center mb-3 md:mb-4 gap-2">
-        <div class="flex items-center">
+    <header class="flex flex-wrap justify-between items-center mb-3 md:mb-4 gap-2 bg-slate-800/40 p-3 rounded-lg border border-slate-700/50">
+        <div class="flex items-center space-x-4">
             <h1 class="text-lg md:text-2xl font-bold neon-text text-emerald-400 truncate">我测</h1>
-            <span class="ml-2 text-[10px] md:text-xs bg-slate-800 px-2 py-1 rounded text-slate-400 hidden sm:inline-block">BLE Ready</span>
-        </div>
-        <div class="flex items-center space-x-3 ml-auto">
-            <div id="connectionStatus" class="flex items-center text-xs md:text-sm">
+            <div id="connectionStatus" class="flex items-center text-xs md:text-sm bg-slate-900/60 px-2 py-1 rounded">
                 <span class="status-dot status-disconnected" id="statusDot"></span>
-                <span id="statusText">未连接</span>
+                <span id="statusText" class="text-slate-400">设备离线</span>
             </div>
-            <button onclick="toggleBluetooth()" id="btnBle" class="bg-blue-600 active:bg-blue-800 hover:bg-blue-700 text-white px-3 py-2 md:px-4 md:py-2 rounded text-xs md:text-sm transition flex items-center gap-1 shadow-lg shadow-blue-900/20 w-20 justify-center">
-                <svg id="iconBleConnect" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 7 10 10-5 5V2l5 5L7 17"/></svg>
-                <svg id="iconBleDisconnect" class="hidden" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
-                <span id="txtBle">配对</span>
-            </button>
-            <button onclick="toggleWSConnection()" id="connectBtn" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded text-sm transition hidden md:block">
-                WS连接
+        </div>
+        
+        <div class="flex items-center space-x-3 md:space-x-6">
+            <div class="text-center bg-slate-900/80 px-3 py-1 rounded border border-slate-700">
+                <div class="text-[10px] text-slate-500">有效眨眼计数</div>
+                <div class="text-xl md:text-2xl font-bold text-emerald-400 font-mono" id="blinkCount">0 次</div>
+            </div>
+            <div class="text-center bg-slate-900/80 px-3 py-1 rounded border border-slate-700">
+                <div class="text-[10px] text-slate-500">眨眼频率 (BPM)</div>
+                <div class="text-xl md:text-2xl font-bold text-blue-400 font-mono" id="blinkRate">等待数据...</div>
+            </div>
+            <div class="text-center bg-slate-900/80 px-3 py-1 rounded border border-slate-700min-w-[120px]">
+                <div class="text-[10px] text-slate-500">干眼症评估结果</div>
+                <div class="text-xs md:text-sm font-bold pt-1 text-slate-400" id="diagnosisResult">未激活诊断</div>
+            </div>
+            
+            <button onclick="toggleBluetooth()" id="btnBle" class="bg-blue-600 active:bg-blue-800 hover:bg-blue-700 text-white px-4 py-2 rounded text-xs md:text-sm font-bold transition flex items-center gap-1 shadow-lg shadow-blue-900/20">
+                <span id="txtBle">连接蓝牙外设</span>
             </button>
         </div>
     </header>
 
-    <div class="canvas-container mb-3 md:mb-4 relative group">
+    <div class="canvas-container mb-3 md:mb-4">
         <canvas id="oscilloscope"></canvas>
         
-        <div class="absolute top-2 right-2 text-right bg-black/60 p-2 rounded backdrop-blur-sm border border-slate-700 pointer-events-none z-10">
-            <div class="text-[10px] text-slate-400">实时信号</div>
-            <div class="text-xl md:text-2xl font-bold text-emerald-400" id="valVoltage">0.00 V</div>
-            <div class="text-[10px] text-slate-500 mt-0.5">ADC: <span id="valAdc">N/A</span></div>
+        <div class="absolute top-2 right-2 text-right bg-black/70 p-2 rounded backdrop-blur-sm border border-slate-700 pointer-events-none z-10 font-mono">
+            <div class="text-[10px] text-slate-400">当前电压 / 采样值</div>
+            <div class="text-lg md:text-xl font-bold text-emerald-400" id="valVoltage">0.00 V</div>
+            <div class="text-[10px] text-slate-500">ADC: <span id="valAdc">0</span></div>
         </div>
 
-        <div id="pauseOverlay" class="hidden absolute inset-0 bg-black/20 backdrop-blur-[2px] flex items-center justify-center pointer-events-none z-20">
-            <div class="bg-slate-900/80 px-4 py-2 rounded border border-emerald-500/50 text-emerald-400 font-bold tracking-widest text-sm md:text-base">
-                已暂停 - 数据停止接收
+        <div id="pauseOverlay" class="hidden absolute inset-0 bg-black/40 backdrop-blur-[1px] flex items-center justify-center pointer-events-none z-20">
+            <div class="bg-slate-900/90 px-6 py-3 rounded-lg border border-emerald-500/50 text-emerald-400 font-bold tracking-widest text-sm md:text-base shadow-2xl">
+                || 核心采样流已挂起 (暂停状态)
             </div>
         </div>
     </div>
 
-    <div class="control-panel grid grid-cols-1 md:grid-cols-5 gap-3 md:gap-4 pb-4 md:pb-0 md:flex-1">
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4 md:h-24">
         
-        <div class="bg-slate-800/50 p-3 md:p-4 rounded border border-blue-900/50 md:col-span-1 flex flex-col order-1">
-            <h3 class="text-blue-400 text-xs md:text-sm mb-2 border-b border-slate-700 pb-2 flex justify-between font-bold">
-                <span>蓝牙透传 (BLE)</span>
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path></svg>
-            </h3>
-            <div class="space-y-3 flex-1">
-                <div class="grid grid-cols-2 gap-2">
-                    <div class="space-y-1">
-                        <label class="text-[10px] text-slate-400 block">Service UUID</label>
-                        <input type="text" id="bleServiceId" value="ffe0" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 md:py-1 text-blue-200 focus:border-blue-500 outline-none text-center font-mono">
-                    </div>
-                    <div class="space-y-1">
-                        <label class="text-[10px] text-slate-400 block">Char UUID</label>
-                        <input type="text" id="bleCharId" value="ffe1" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 md:py-1 text-blue-200 focus:border-blue-500 outline-none text-center font-mono">
-                    </div>
+        <div class="bg-slate-800/40 p-3 rounded-lg border border-slate-700 flex flex-wrap items-center justify-between gap-2">
+            <div class="flex items-center space-x-3">
+                <div>
+                    <label class="text-[11px] text-slate-400 block mb-0.5">高电平触发阈值 (V)</label>
+                    <input type="number" id="cfgThreshold" value="2.00" step="0.05" min="0" max="3.3" class="w-20 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm font-bold font-mono text-emerald-400 text-center focus:border-emerald-500 outline-none" onchange="updateSettings()">
                 </div>
-                
-                <div class="pt-2 border-t border-slate-700">
-                    <label class="text-[10px] text-slate-400 block mb-1">发送指令</label>
-                    <div class="flex gap-2">
-                        <input type="text" id="bleSendInput" placeholder="CMD" class="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-2 md:py-1 text-slate-200 focus:border-blue-500 outline-none">
-                        <button onclick="sendBleData()" class="bg-blue-600 active:bg-blue-700 text-white px-4 py-1 rounded text-xs font-bold">发送</button>
-                    </div>
+                <div>
+                    <label class="text-[11px] text-slate-400 block mb-0.5">干眼症判定阈值 (BPM)</label>
+                    <input type="number" id="cfgDryThreshold" value="25" step="1" min="1" max="100" class="w-20 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm font-bold font-mono text-red-400 text-center focus:border-red-500 outline-none" onchange="updateSettings()">
                 </div>
+            </div>
+            <div class="text-[10px] text-slate-500 max-w-[140px]">提示：正常的静息眨眼频率通常为 15-20 次/分钟。</div>
+        </div>
+
+        <div class="bg-slate-800/40 p-3 rounded-lg border border-slate-700 flex items-center justify-between gap-4">
+            <div class="flex-1 flex items-center space-x-2">
+                <span class="text-xs text-slate-400 whitespace-nowrap">时间轴缩放</span>
+                <span class="text-[10px] text-slate-500">密</span>
+                <input type="range" min="1" max="15" step="0.5" value="3" class="flex-1 animate-pulse" id="scaleX" oninput="updateSettings()">
+                <span class="text-[10px] text-slate-500">疏</span>
+            </div>
+            <div class="flex items-center space-x-2 bg-slate-900/40 p-2 rounded border border-slate-700/60">
+                <label for="pauseToggle" class="text-xs text-slate-300 cursor-pointer select-none">数据流冻结</label>
+                <input type="checkbox" id="pauseToggle" class="w-4 h-4 accent-emerald-500 cursor-pointer" onchange="togglePauseMode()"/>
             </div>
         </div>
 
-        <div class="bg-slate-800/50 p-3 md:p-4 rounded border border-slate-700 order-2">
-            <h3 class="text-slate-400 text-xs md:text-sm mb-2 border-b border-slate-700 pb-2 font-bold">显示控制</h3>
-            <div class="space-y-4 md:space-y-3">
-                <div class="flex items-center justify-between">
-                    <label class="text-xs md:text-sm text-slate-300">X轴缩放</label>
-                    <div class="flex items-center gap-2 flex-1 ml-4">
-                        <span class="text-[10px] text-slate-500">密</span>
-                        <input type="range" min="0.5" max="10" step="0.5" value="1" class="flex-1" id="scaleX" oninput="updateSettings()">
-                        <span class="text-[10px] text-slate-500">疏</span>
-                    </div>
-                </div>
-                <div class="flex items-center justify-between bg-slate-900/50 p-2 rounded">
-                    <label class="text-xs md:text-sm text-slate-300">暂停 / 冻结</label>
-                    <div class="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in">
-                        <input type="checkbox" id="pauseToggle" class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer" style="top:0; left:0;" onchange="togglePauseMode()"/>
-                        <label for="pauseToggle" class="toggle-label block overflow-hidden h-5 rounded-full bg-slate-600 cursor-pointer"></label>
-                    </div>
-                    <style>.toggle-checkbox:checked { right: 0; left: auto; border-color: #10B981; } .toggle-checkbox:checked + .toggle-label { background-color: #10B981; }</style>
-                </div>
-                
-                <div id="historyControl" class="hidden pt-2 border-t border-slate-700/50">
-                    <div class="flex justify-between text-[10px] text-slate-400 mb-1">
-                        <span>旧数据</span>
-                        <span>最新</span>
-                    </div>
-                    <input type="range" id="historySlider" min="0" max="0" value="0" class="w-full" oninput="onHistoryScroll()">
-                    <div class="text-center text-xs text-emerald-500 mt-1" id="historyLabel">当前视窗</div>
-                </div>
-            </div>
-        </div>
-
-        <div class="bg-slate-800/50 p-3 md:p-4 rounded border border-slate-700 order-3">
-            <h3 class="text-slate-400 text-xs md:text-sm mb-2 border-b border-slate-700 pb-2 font-bold">信号统计</h3>
-            <div class="grid grid-cols-4 md:grid-cols-2 gap-2 text-xs md:text-sm text-center md:text-left">
-                <div class="bg-slate-900/50 p-1 rounded"><div class="text-[10px] text-slate-500">最大</div><div class="text-emerald-300 font-mono" id="statMax">0</div></div>
-                <div class="bg-slate-900/50 p-1 rounded"><div class="text-[10px] text-slate-500">最小</div><div class="text-emerald-300 font-mono" id="statMin">0</div></div>
-                <div class="bg-slate-900/50 p-1 rounded"><div class="text-[10px] text-slate-500">平均</div><div class="text-emerald-300 font-mono" id="statAvg">0</div></div>
-                <div class="bg-slate-900/50 p-1 rounded"><div class="text-[10px] text-slate-500">点数</div><div class="text-emerald-300 font-mono" id="statCount">0</div></div>
-            </div>
-        </div>
-
-        <div class="bg-slate-800/50 p-3 md:p-4 rounded border border-slate-700 order-4">
-            <h3 class="text-slate-400 text-xs md:text-sm mb-2 border-b border-slate-700 pb-2 font-bold">量程配置</h3>
-            <div class="space-y-2">
-                <div class="flex items-center justify-between">
-                    <label class="text-xs md:text-sm text-slate-300">ADC分辨率</label>
-                    <input type="number" id="cfgAdcMax" value="4095" class="w-16 bg-slate-700 border border-slate-600 rounded px-1 py-1 text-xs text-center text-emerald-300" onchange="updateSettings()">
-                </div>
-                <div class="flex items-center justify-between">
-                    <label class="text-xs md:text-sm text-slate-300">系统电压(V)</label>
-                    <input type="number" id="cfgSysVoltage" value="3.3" class="w-16 bg-slate-700 border border-slate-600 rounded px-1 py-1 text-xs text-center text-emerald-300" onchange="updateSettings()">
-                </div>
-                </div>
-        </div>
-
-        <div class="bg-slate-800/50 p-3 md:p-4 rounded border border-slate-700 flex flex-col order-5">
-            <h3 class="text-slate-400 text-xs md:text-sm mb-2 border-b border-slate-700 pb-2 font-bold flex justify-between items-center">
-                <span>操作 & 日志</span>
-                <button onclick="clearLog()" class="text-[10px] text-slate-500 hover:text-red-400 transition">[清除日志]</button>
-            </h3>
-            <div class="flex gap-2 mb-2">
-                 <button onclick="clearWaveform()" class="flex-1 bg-slate-700 active:bg-slate-600 text-slate-200 text-xs py-2 rounded border border-slate-600">清空数据</button>
-                 <button onclick="exportCSV()" class="flex-1 bg-blue-900/40 active:bg-blue-800/40 text-blue-200 text-xs py-2 rounded border border-blue-800">导出CSV</button>
-            </div>
-            <div class="flex items-center justify-between mb-2">
-                 <label class="text-xs text-slate-400">模拟模式</label>
-                 <input type="checkbox" id="simToggle" class="w-4 h-4 accent-emerald-500" onchange="toggleSimulation()">
-            </div>
-            <div id="consoleLog" class="log-scroll-container flex-1 overflow-y-auto text-[10px] md:text-xs font-mono text-slate-400 space-y-1 h-32 md:h-auto scrollbar-thin scrollbar-thumb-slate-600 bg-black/20 p-1 rounded">
-                <div class="text-yellow-500">> 系统就绪</div>
-            </div>
+        <div class="bg-slate-800/40 p-3 rounded-lg border border-slate-700 flex items-center justify-around gap-2">
+            <button onclick="exportCSV()" class="flex-1 bg-gradient-to-r from-blue-900/60 to-indigo-900/60 active:from-blue-800 active:to-indigo-800 text-blue-200 font-bold text-xs py-3 rounded-lg border border-blue-700 shadow-md transition-all">
+                导出历史数据 (CSV)
+            </button>
+            <button onclick="resetMetrics()" class="bg-slate-700 hover:bg-slate-600 active:bg-slate-800 text-slate-300 text-xs px-3 py-3 rounded-lg border border-slate-600">
+                重置计数
+            </button>
         </div>
     </div>
 
     <script>
+        // === 全局业务与硬件映射配置 ===
         let globalConfig = {
             adcMax: 4095,
             sysVoltage: 3.3,
-            scaleX: 1
+            scaleX: 3,
+            voltageThreshold: 2.0,  // 触发检测的高电平电压阈值
+            dryEyeBpmThreshold: 25  // 判定为干眼症的 BPM 频率阈值
         };
 
         const CANVAS_BG = '#000000';
         const GRID_COLOR = '#1e293b';
         const LINE_COLOR = '#10b981';
-        const MAX_HISTORY = 20000;
-        const BASE_VIEW_WIDTH = 1000;
+        const THRESHOLD_LINE_COLOR = '#ef4444'; // 阈值参考线颜色
+        const MAX_HISTORY_POINTS = 3000;
 
-        let dataBuffer = []; 
+        let dataBuffer = [];      // 包含 { val: adc值, time: Date对象, tsText: 格式化时间文本 }
         let incomingBuffer = "";
-        
-        let ws = null;
         let isConnected = false;
-        let isSimulation = false;
         let isPaused = false;
-        let packetCount = 0;
-        let simInterval;
         
-        let frozenLength = 0;
-        let historyOffset = 0;
+        // === 眨眼核心核心状态算法机 ===
+        let isHighLevelState = false; // 当前硬件是否处于高电平状态包络中
+        let binksTimestamps = [];     // 存储每次第一个高电平跳变发生的绝对时间戳（毫秒）
+        let systemStartTime = null;   // 数据流开始接收后的系统对齐零点时间
 
+        // === 蓝牙核心底层句柄 ===
         let bleDevice = null;
         let bleCharacteristic = null;
-        let bleWriter = null;
         const textDecoder = new TextDecoder();
-        const textEncoder = new TextEncoder();
 
         const canvas = document.getElementById('oscilloscope');
         const ctx = canvas.getContext('2d');
-        const logPanel = document.getElementById('consoleLog');
-        const historySlider = document.getElementById('historySlider');
 
         function resizeCanvas() {
             const dpr = window.devicePixelRatio || 1;
             const rect = canvas.parentElement.getBoundingClientRect();
-            
             canvas.width = rect.width * dpr;
             canvas.height = rect.height * dpr;
             ctx.scale(dpr, dpr);
-            
             canvas.logicalWidth = rect.width;
             canvas.logicalHeight = rect.height;
         }
@@ -291,109 +191,218 @@
         setTimeout(resizeCanvas, 100);
         updateSettings();
 
-        function log(msg, type='info') {
-            const div = document.createElement('div');
-            const time = new Date().toLocaleTimeString().split(' ')[0];
-            div.innerText = `[${time}] ${msg}`;
-            if(type === 'error') div.className = 'text-red-400';
-            else if(type === 'success') div.className = 'text-emerald-400';
-            else if(type === 'ble') div.className = 'text-blue-400';
-            logPanel.appendChild(div);
-            logPanel.scrollTop = logPanel.scrollHeight;
-        }
-
-        function clearLog() {
-            logPanel.innerHTML = '<div class="text-slate-600 italic">> 日志已清除</div>';
-        }
-
         function updateSettings() {
-            globalConfig.adcMax = parseFloat(document.getElementById('cfgAdcMax').value) || 4095;
-            globalConfig.sysVoltage = parseFloat(document.getElementById('cfgSysVoltage').value) || 3.3;
-            globalConfig.scaleX = parseFloat(document.getElementById('scaleX').value) || 1;
-            if(isPaused) updateSliderRange();
+            globalConfig.scaleX = parseFloat(document.getElementById('scaleX').value) || 3;
+            globalConfig.voltageThreshold = parseFloat(document.getElementById('cfgThreshold').value) || 2.0;
+            globalConfig.dryEyeBpmThreshold = parseFloat(document.getElementById('cfgDryThreshold').value) || 25;
         }
 
-        // 统一为物理电压转换逻辑，不再计算 bias
         function adcToPhys(adcVal) {
             return (adcVal / globalConfig.adcMax) * globalConfig.sysVoltage;
         }
 
+        // 格式化系统时间戳（包含毫秒，用于横轴高精度渲染）
+        function formatSystemTime(dateObj) {
+            const pad = (n) => String(n).padStart(2, '0');
+            const h = pad(dateObj.getHours());
+            const m = pad(dateObj.getMinutes());
+            const s = pad(dateObj.getSeconds());
+            const ms = String(dateObj.getMilliseconds()).padStart(3, '0').substring(0, 1);
+            return `${h}:${m}:${s}.${ms}`;
+        }
+
+        // === 信号处理与突变检测状态机 ===
+        function processRealtimeSignal(adcRawVal) {
+            const currentVoltage = adcToPhys(adcRawVal);
+            
+            // 首次接受到有效硬件点数据时，锚定系统计算基准零点
+            if (!systemStartTime) {
+                systemStartTime = Date.now();
+            }
+
+            // 边缘触发检测核心状态转换
+            if (currentVoltage >= globalConfig.voltageThreshold) {
+                if (!isHighLevelState) {
+                    // 【突变锁定】：瞬间由低电平跳变到第一个高电平点
+                    isHighLevelState = true; 
+                    registerValidBlink();
+                }
+                // 如果已经在高电平状态内，则属于后续由于眨眼动作产生的包络或震荡，直接忽略不计入计数
+            } else {
+                // 回落到阈值下方，释放状态锁，允许接受下一次波形的上升沿触发
+                if (isHighLevelState) {
+                    isHighLevelState = false;
+                }
+            }
+        }
+
+        // 注册一次合法的眨眼信号点
+        function registerValidBlink() {
+            const now = Date.now();
+            binksTimestamps.push(now);
+            
+            document.getElementById('blinkCount').innerText = binksTimestamps.length + " 次";
+            
+            // 播放界面数值瞬时跳变反馈特效
+            const blinkCountUI = document.getElementById('blinkCount');
+            blinkCountUI.classList.add('scale-110', 'text-yellow-400');
+            setTimeout(() => blinkCountUI.classList.remove('scale-110', 'text-yellow-400'), 150);
+
+            evalBlinkFrequency();
+        }
+
+        // 实时更新眨眼频率及评估干眼症
+        function evalBlinkFrequency() {
+            if (!systemStartTime) return;
+            
+            const elapsedSeconds = (Date.now() - systemStartTime) / 1000;
+            const blinkRateUI = document.getElementById('blinkRate');
+            const diagnosisUI = document.getElementById('diagnosisResult');
+
+            if (elapsedSeconds < 40) {
+                // 首次检测 40 秒内，进行锁屏倒计时提示
+                const remaining = Math.ceil(40 - elapsedSeconds);
+                blinkRateUI.innerText = `数据积累中(${remaining}s)`;
+                blinkRateUI.className = "text-xs text-slate-500 font-mono";
+                diagnosisUI.innerText = "等待窗口对齐";
+                diagnosisUI.className = "text-xs font-bold pt-1 text-slate-500";
+                return;
+            }
+
+            // 后续逻辑：滑动时间窗口实时追踪近 40 秒内眨眼包数量
+            const cutoffTime = Date.now() - 40000;
+            const validBlinksInWindow = binksTimestamps.filter(ts => ts >= cutoffTime).length;
+            
+            // 将 40 秒内的计数值等比换算归一化为每分钟频率 (BPM)
+            // 公式： $$BPM = \frac{\text{validBlinksInWindow}}{40} \times 60$$
+            const bpm = Math.round((validBlinksInWindow / 40) * 60);
+            
+            blinkRateUI.innerText = `${bpm} BPM`;
+            blinkRateUI.className = "text-xl md:text-2xl font-bold text-blue-400 font-mono";
+
+            // 业务评估栏：判断是否大于用户设定的诊断干眼症阈值
+            if (bpm > globalConfig.dryEyeBpmThreshold) {
+                diagnosisUI.innerText = "⚠️ 疑似干眼症症状";
+                diagnosisUI.className = "text-xs font-bold pt-1 text-red-500 animate-bounce";
+            } else {
+                diagnosisUI.innerText = "指标正常";
+                diagnosisUI.className = "text-xs font-bold pt-1 text-emerald-400";
+            }
+        }
+
+        // 每秒自动触发刷新，确保在用户不眨眼时，频率也能随着时间窗口向后滑动而实时归零更新
+        setInterval(evalBlinkFrequency, 1000);
+
+        function resetMetrics() {
+            binksTimestamps = [];
+            systemStartTime = Date.now();
+            document.getElementById('blinkCount').innerText = "0 次";
+            document.getElementById('blinkRate').innerText = "重置中...";
+            document.getElementById('diagnosisResult').innerText = "未激活诊断";
+            document.getElementById('diagnosisResult').className = "text-xs font-bold pt-1 text-slate-400";
+        }
+
+        // === 核心数据流绘图机 ===
         function draw() {
             requestAnimationFrame(draw);
-            const effectiveLength = isPaused ? frozenLength : dataBuffer.length;
-            if (!isPaused) historyOffset = 0;
+            if (dataBuffer.length === 0) {
+                ctx.fillStyle = CANVAS_BG;
+                ctx.fillRect(0, 0, canvas.logicalWidth, canvas.logicalHeight);
+                drawGrid(canvas.logicalWidth, canvas.logicalHeight, []);
+                return;
+            }
 
             const width = canvas.logicalWidth;
             const height = canvas.logicalHeight;
 
             ctx.fillStyle = CANVAS_BG;
             ctx.fillRect(0, 0, width, height);
-            drawGrid(width, height);
 
-            if (effectiveLength === 0) {
-                ctx.fillStyle = "#334155";
-                ctx.font = "14px JetBrains Mono";
-                ctx.fillText("等待数据...", width/2 - 40, height/2);
-                return;
-            }
+            // 根据缩放因子，动态计算屏幕可以容纳展现的硬件序列点数
+            const maxPointsToShow = Math.floor(width / (globalConfig.scaleX * 0.4));
+            const viewData = dataBuffer.slice(-maxPointsToShow);
 
+            drawGrid(width, height, viewData);
+
+            // 绘制当前高电平触发阈值的红色警戒参考线
+            const thresholdY = height * (1 - (globalConfig.voltageThreshold / globalConfig.sysVoltage));
+            ctx.strokeStyle = THRESHOLD_LINE_COLOR;
+            ctx.lineWidth = 1;
+            ctx.setLineDash([6, 3]);
+            ctx.beginPath();
+            ctx.moveTo(0, thresholdY);
+            ctx.lineTo(width, thresholdY);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            
+            ctx.fillStyle = THRESHOLD_LINE_COLOR;
+            ctx.font = '10px sans-serif';
+            ctx.fillText(`检测阈值: ${globalConfig.voltageThreshold.toFixed(2)}V`, width - 90, thresholdY - 4);
+
+            // 渲染时序波形路径
             ctx.beginPath();
             ctx.strokeStyle = LINE_COLOR;
-            ctx.lineWidth = 2;
-            ctx.shadowBlur = 0;
+            ctx.lineWidth = 2.5;
 
-            const pointsToRender = Math.floor(BASE_VIEW_WIDTH / globalConfig.scaleX);
-            const step = width / pointsToRender;
+            const step = width / (viewData.length - 1 || 1);
 
-            let endIndex = effectiveLength - historyOffset;
-            if (endIndex < 0) endIndex = 0;
-            let startIndex = endIndex - pointsToRender;
-            if (startIndex < 0) startIndex = 0;
+            for (let i = 0; i < viewData.length; i++) {
+                const x = i * step;
+                const physVal = adcToPhys(viewData[i].val);
+                const normalizedY = physVal / globalConfig.sysVoltage;
+                const y = height * (1 - normalizedY);
 
-            // 0-3.3V 归一化映射逻辑
-            for (let i = startIndex; i < endIndex; i++) {
-                if (i >= dataBuffer.length) break;
-                const x = (i - startIndex) * step;
-                const physVal = adcToPhys(dataBuffer[i]);
-                let normalizedY = physVal / globalConfig.sysVoltage;
-                normalizedY = Math.max(0, Math.min(1, normalizedY));
-                const y = height * (1 - normalizedY); // 顶部是 3.3V，底部是 0V
-                if (i === startIndex) ctx.moveTo(x, y);
+                if (i === 0) ctx.moveTo(x, y);
                 else ctx.lineTo(x, y);
             }
             ctx.stroke();
-
-            if (isPaused) {
-                updateStatsForRange(startIndex, endIndex);
-            }
         }
 
-        function drawGrid(w, h) {
-            // 网格从 0V 开始均匀分布到最大系统电压
-            for (let i = 0; i <= 5; i++) {
-                const ratio = i / 5;
+        function drawGrid(w, h, viewData) {
+            // Y 轴多级电压梯度刻度线
+            for (let i = 0; i <= 4; i++) {
+                const ratio = i / 4;
                 const y = h * (1 - ratio);
                 const val = ratio * globalConfig.sysVoltage;
-                const isZeroLine = i === 0; // 最底部线为 0V 基准线
 
-                ctx.lineWidth = isZeroLine ? 2 : 1;
-                ctx.strokeStyle = isZeroLine ? '#94a3b8' : GRID_COLOR;
-                ctx.setLineDash(isZeroLine ? [] : [4, 4]); // 虚线效果更美观
-
+                ctx.lineWidth = i === 0 ? 1.5 : 1;
+                ctx.strokeStyle = i === 0 ? '#475569' : GRID_COLOR;
                 ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
-                ctx.fillStyle = isZeroLine ? '#cbd5e1' : '#64748b';
-                ctx.font = '10px sans-serif';
-                ctx.fillText(`${val.toFixed(2)}V`, 5, y - 5);
+                
+                ctx.fillStyle = '#64748b';
+                ctx.font = '10px JetBrains Mono';
+                ctx.fillText(`${val.toFixed(1)}V`, 5, y - 4);
             }
-            ctx.setLineDash([]);
-            ctx.strokeStyle = GRID_COLOR;
-            ctx.lineWidth = 1;
-            for (let i = 1; i < 10; i++) {
-                const x = (w / 10) * i;
-                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+
+            // X 轴时间映射线转换：均匀采样抽头提取当前波段所对应的具体系统时间戳
+            if (viewData.length > 1) {
+                ctx.strokeStyle = GRID_COLOR;
+                ctx.lineWidth = 1;
+                ctx.fillStyle = '#475569';
+                ctx.font = '9px JetBrains Mono';
+
+                const totalTicks = 5; 
+                const stepIdx = Math.floor(viewData.length / totalTicks);
+
+                for (let i = 1; i < totalTicks; i++) {
+                    const dataIdx = i * stepIdx;
+                    if (dataIdx >= viewData.length) break;
+                    
+                    const step = w / (viewData.length - 1);
+                    const x = dataIdx * step;
+
+                    ctx.beginPath();
+                    ctx.moveTo(x, 0);
+                    ctx.lineTo(x, h);
+                    ctx.stroke();
+
+                    // 呈现当前帧采样点绑定的系统真实时间标签
+                    ctx.fillText(viewData[dataIdx].tsText, x - 20, h - 6);
+                }
             }
         }
 
+        // === 数据管道底层总线输入驱动 ===
         function handleIncomingData(chunk) {
             if (isPaused) return;
 
@@ -403,50 +412,30 @@
             let parts = incomingBuffer.split('\n');
             incomingBuffer = parts.pop(); 
 
+            const now = new Date();
+            const formattedTime = formatSystemTime(now);
+
             parts.forEach(part => {
                 const cleanStr = part.trim();
                 if (cleanStr.length > 0) {
                     const val = parseInt(cleanStr);
-                    if (!isNaN(val) && val >= 0 && val <= 65535) pushData(val);
+                    if (!isNaN(val) && val >= 0 && val <= 65535) {
+                        // 1. 同步送入突变检测状态机
+                        processRealtimeSignal(val);
+
+                        // 2. 存入波形环形历史回放缓冲区
+                        dataBuffer.push({ val: val, time: now, tsText: formattedTime });
+                        if (dataBuffer.length > MAX_HISTORY_POINTS) {
+                            dataBuffer.shift();
+                        }
+                    }
                 }
             });
         }
 
-        function pushData(val) {
-            dataBuffer.push(val);
-            if (dataBuffer.length > MAX_HISTORY) {
-                dataBuffer.shift(); 
-            }
-            packetCount++;
-            if (!isPaused && packetCount % 5 === 0) {
-                const displayV = adcToPhys(val).toFixed(2);
-                document.getElementById('valAdc').innerText = val;
-                document.getElementById('valVoltage').innerText = displayV + " V";
-                updateStatsForRange(Math.max(0, dataBuffer.length - 200), dataBuffer.length);
-            }
-        }
-
-        function updateStatsForRange(start, end) {
-            const viewData = dataBuffer.slice(start, end);
-            if (viewData.length > 0) {
-                let min = 9999, max = -9999, sum = 0;
-                viewData.forEach(adc => {
-                    const v = adcToPhys(adc);
-                    if(v < min) min = v;
-                    if(v > max) max = v;
-                    sum += v;
-                });
-                const avg = sum / viewData.length;
-                document.getElementById('statMax').innerText = max.toFixed(2);
-                document.getElementById('statMin').innerText = min.toFixed(2);
-                document.getElementById('statAvg').innerText = avg.toFixed(2);
-                document.getElementById('statCount').innerText = viewData.length;
-            }
-        }
-        
+        // === 蓝牙链路行为管理器 ===
         async function toggleBluetooth() {
             if (isConnected && bleDevice && bleDevice.gatt.connected) {
-                log('正在断开蓝牙...', 'info');
                 bleDevice.gatt.disconnect();
             } else {
                 connectBluetooth();
@@ -455,231 +444,74 @@
 
         async function connectBluetooth() {
             if (!navigator.bluetooth) {
-                alert("浏览器不支持蓝牙 API\n请使用 Chrome/Edge (Android/PC) 或 Bluefy (iOS)");
+                alert("当前环境或浏览器不支持 Web Bluetooth API，请确保部署在 HTTPS 环境下并使用支持的浏览器（如 Chrome）。");
                 return;
             }
-
-            let srvUuid = document.getElementById('bleServiceId').value.trim();
-            let charUuid = document.getElementById('bleCharId').value.trim();
-
-            if(!srvUuid.startsWith('0x') && srvUuid.length === 4) srvUuid = parseInt("0x"+srvUuid);
-            if(!charUuid.startsWith('0x') && charUuid.length === 4) charUuid = parseInt("0x"+charUuid);
-
             try {
-                log('搜索设备中...', 'ble');
-                
+                // 默认监听通用串口透传 FFE0 服务
                 bleDevice = await navigator.bluetooth.requestDevice({
                     acceptAllDevices: true,
-                    optionalServices: [srvUuid]
+                    optionalServices: [0xffe0]
                 });
 
-                log(`连接: ${bleDevice.name}`, 'ble');
-                bleDevice.addEventListener('gattserverdisconnected', onBleDisconnected);
+                bleDevice.addEventListener('gattserverdisconnected', () => {
+                    isConnected = false;
+                    updateStatusUI('disconnected');
+                    resetMetrics();
+                });
 
                 const server = await bleDevice.gatt.connect();
-                log('已连接', 'ble');
-
-                const service = await server.getPrimaryService(srvUuid);
-
-                try {
-                    bleWriter = await service.getCharacteristic(0xFFE1);
-                    log('发送通道就绪 (FFE1)', 'success');
-                } catch (e) {
-                    log('警告: 无法获取写通道', 'error');
-                }
-
-                bleCharacteristic = await service.getCharacteristic(0xFFE2);
+                const service = await server.getPrimaryService(0xffe0);
+                bleCharacteristic = await service.getCharacteristic(0xffe2); // 接收数据特征
                 await bleCharacteristic.startNotifications();
-
-                bleCharacteristic.addEventListener('characteristicvaluechanged', handleBleNotification);
+                bleCharacteristic.addEventListener('characteristicvaluechanged', (e) => {
+                    const chunk = textDecoder.decode(e.target.value);
+                    handleIncomingData(chunk);
+                });
 
                 isConnected = true;
                 updateStatusUI('ble');
-                log('开始接收数据', 'success');
-
+                systemStartTime = Date.now(); // 挂载零点
             } catch (error) {
-                if (error.name === 'SecurityError' && error.message.includes('permissions policy')) {
-                    log('环境限制: 预览窗口无法访问蓝牙', 'error');
-                    alert("⚠️ 无法在预览窗口中使用蓝牙\n\n请将此文件保存为html后，使用本地服务器运行，或在支持的手机浏览器中打开。");
-                } else {
-                    log(`错误: ${error.message}`, 'error');
-                }
+                console.error(error);
                 isConnected = false;
                 updateStatusUI('disconnected');
             }
         }
 
-        function onBleDisconnected() {
-            log('蓝牙已断开', 'error');
-            isConnected = false;
-            updateStatusUI('disconnected');
-        }
-
-        function handleBleNotification(event) {
-            const value = event.target.value;
-            const textChunk = textDecoder.decode(value);
-            handleIncomingData(textChunk);
-        }
-
-        async function sendBleData() {
-            if (!bleDevice || !bleDevice.gatt.connected || !bleWriter) {
-                log('蓝牙未连接', 'error');
-                return;
-            }
-            const input = document.getElementById('bleSendInput');
-            const strToSend = input.value;
-            if (!strToSend) return;
-
-            try {
-                const data = textEncoder.encode(strToSend);
-                await bleWriter.writeValue(data);
-                log(`发送: ${strToSend}`, 'ble');
-            } catch (error) {
-                log(`发送失败: ${error}`, 'error');
-            }
-        }
-
         function togglePauseMode() {
             isPaused = document.getElementById('pauseToggle').checked;
-            const overlay = document.getElementById('pauseOverlay');
-            const historyDiv = document.getElementById('historyControl');
-            
-            if (isPaused) {
-                frozenLength = dataBuffer.length;
-                historyOffset = 0;
-                overlay.classList.remove('hidden');
-                historyDiv.classList.remove('hidden');
-                updateSliderRange();
-                historySlider.value = 0;
-            } else {
-                overlay.classList.add('hidden');
-                historyDiv.classList.add('hidden');
-                frozenLength = 0;
-                historyOffset = 0;
-            }
-        }
-
-        function updateSliderRange() {
-            if (!isPaused) return;
-            const pointsToRender = Math.floor(BASE_VIEW_WIDTH / globalConfig.scaleX);
-            const maxOffset = Math.max(0, frozenLength - pointsToRender);
-            historySlider.max = maxOffset;
-        }
-        
-        function onHistoryScroll() {
-            if (!isPaused) return;
-            const sliderMax = parseInt(historySlider.max);
-            const sliderVal = parseInt(historySlider.value);
-            historyOffset = sliderMax - sliderVal;
-            document.getElementById('historyLabel').innerText = historyOffset === 0 ? "冻结时刻" : `回溯: -${historyOffset}点`;
-            
-            const idx = frozenLength - historyOffset - 1;
-            if (idx >= 0 && idx < dataBuffer.length) {
-                const val = dataBuffer[idx];
-                document.getElementById('valAdc').innerText = val;
-                document.getElementById('valVoltage').innerText = adcToPhys(val).toFixed(2) + " V";
-            }
-        }
-
-        function clearWaveform() {
-            dataBuffer = [];
-            packetCount = 0;
-            frozenLength = 0;
-            if (isPaused) { 
-                historySlider.max = 0; historySlider.value = 0; historyOffset = 0;
-            }
-            updateStatsForRange(0, 0);
-            log('数据已清空', 'info');
+            document.getElementById('pauseOverlay').classList.toggle('hidden', !isPaused);
         }
 
         function exportCSV() {
-            if (dataBuffer.length === 0) return alert("无数据");
-            let csvContent = "data:text/csv;charset=utf-8,Index,Raw ADC,Phys Voltage (V)\n";
-            dataBuffer.forEach((val, index) => {
-                csvContent += `${index},${val},${adcToPhys(val).toFixed(4)}\n`;
+            if (dataBuffer.length === 0) return alert("无可供导出的历史采样快照。");
+            let csvContent = "data:text/csv;charset=utf-8,系统时间轴,原始采样(ADC),物理等效电压(V)\n";
+            dataBuffer.forEach(item => {
+                csvContent += `${item.tsText},${item.val},${adcToPhys(item.val).toFixed(4)}\n`;
             });
             const encodedUri = encodeURI(csvContent);
             const link = document.createElement("a");
             link.href = encodedUri;
-            link.download = `ble_signal_${new Date().getTime()}.csv`;
+            link.download = `blink_raw_dataset_${new Date().getTime()}.csv`;
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
-        }
-
-        function toggleSimulation() {
-            isSimulation = document.getElementById('simToggle').checked;
-            if (isSimulation) {
-                if(ws) ws.close();
-                if(bleDevice && bleDevice.gatt.connected) bleDevice.gatt.disconnect();
-                updateStatusUI('simulation');
-                let t = 0;
-                simInterval = setInterval(() => {
-                    t += 0.1;
-                    // 模拟生成 0V ~ 3.3V 的直流偏置加正弦波形
-                    let baseSignal = 2048; // 1.65V 中间值
-                    let sineWave = Math.sin(t) * 1000; // 幅度约为 0.8V 的正弦波
-                    
-                    // 模拟突变脉冲
-                    let pulse = 0;
-                    if (t % 10 > 4.0 && t % 10 < 4.5) {
-                        pulse = 800; 
-                    }
-                    
-                    const noise = Math.random() * 30 - 15;
-                    let finalAdc = Math.floor(Math.max(0, Math.min(4095, baseSignal + sineWave + pulse + noise)));
-                    pushData(finalAdc);
-                }, 20);
-                log('模拟模式已开启', 'info');
-            } else {
-                clearInterval(simInterval);
-                updateStatusUI('disconnected');
-                log('模拟模式已停止', 'info');
-            }
-        }
-
-        function toggleWSConnection() {
-            if (isSimulation) return alert("请先关闭模拟模式");
-            if (isConnected) {
-                if(ws) ws.close();
-                if(bleDevice && bleDevice.gatt.connected) bleDevice.gatt.disconnect();
-            } else {
-                try { ws = new WebSocket("ws://localhost:8081"); } catch (e) { return; }
-                ws.onopen = () => { isConnected = true; updateStatusUI('connected'); log('WS已连接', 'success'); };
-                ws.onmessage = (e) => handleIncomingData(e.data);
-                ws.onclose = () => { if(!bleDevice || !bleDevice.gatt.connected) { isConnected = false; updateStatusUI('disconnected'); }};
-            }
         }
 
         function updateStatusUI(status) {
             const dot = document.getElementById('statusDot');
             const text = document.getElementById('statusText');
             const btn = document.getElementById('btnBle');
-            const iconConnect = document.getElementById('iconBleConnect');
-            const iconDisconnect = document.getElementById('iconBleDisconnect');
-            const txtBle = document.getElementById('txtBle');
-            
-            dot.className = 'status-dot'; 
-            
-            if (status === 'connected') { 
-                dot.classList.add('status-connected'); text.innerText = 'WS 在线'; 
-            }
-            else if (status === 'ble') { 
-                dot.classList.add('status-ble'); text.innerText = 'BLE 在线';
-                btn.className = "bg-red-600 active:bg-red-800 hover:bg-red-700 text-white px-3 py-2 md:px-4 md:py-2 rounded text-xs md:text-sm transition flex items-center gap-1 shadow-lg shadow-red-900/20 w-20 justify-center";
-                iconConnect.classList.add('hidden');
-                iconDisconnect.classList.remove('hidden');
-                txtBle.innerText = "断开";
-            }
-            else if (status === 'simulation') { 
-                dot.classList.add('status-simulation'); text.innerText = '模拟中'; 
-            }
-            else { 
-                dot.classList.add('status-disconnected'); text.innerText = '离线'; 
-                btn.className = "bg-blue-600 active:bg-blue-800 hover:bg-blue-700 text-white px-3 py-2 md:px-4 md:py-2 rounded text-xs md:text-sm transition flex items-center gap-1 shadow-lg shadow-blue-900/20 w-20 justify-center";
-                iconConnect.classList.remove('hidden');
-                iconDisconnect.classList.add('hidden');
-                txtBle.innerText = "配对";
+            dot.className = 'status-dot ';
+            if (status === 'ble') {
+                dot.classList.add('status-ble'); text.innerText = 'BLE 连接在线'; text.className="text-blue-400 font-bold";
+                btn.className = "bg-red-600 active:bg-red-800 hover:bg-red-700 text-white px-4 py-2 rounded text-xs md:text-sm font-bold transition";
+                document.getElementById('txtBle').innerText = "切断物理连接";
+            } else {
+                dot.classList.add('status-disconnected'); text.innerText = '设备离线'; text.className="text-slate-400";
+                btn.className = "bg-blue-600 active:bg-blue-800 hover:bg-blue-700 text-white px-4 py-2 rounded text-xs md:text-sm font-bold transition";
+                document.getElementById('txtBle').innerText = "连接蓝牙外设";
             }
         }
         
