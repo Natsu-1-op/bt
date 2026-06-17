@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>眨眼检测与干眼症分析上位机 (双保险滤波版)</title>
+    <title>眨眼检测与干眼症分析上位机 (按秒导出精炼版)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
@@ -122,7 +122,7 @@
                     <input type="number" id="cfgDryThreshold" value="25" step="1" min="1" max="100" class="w-16 bg-slate-900 border border-slate-600 rounded px-1.5 py-0.5 text-xs font-bold font-mono text-red-400 text-center focus:border-red-500 outline-none" onchange="updateSettings()">
                 </div>
             </div>
-            <div class="text-[10px] text-slate-500">提示：死区时间需略大于单个包络的持续总长度。</div>
+            <div class="text-[10px] text-slate-500">提示：数据将按秒整理归类，拒绝臃肿。</div>
         </div>
 
         <div class="bg-slate-800/40 p-3 rounded-lg border border-slate-700 flex items-center justify-between gap-4">
@@ -154,7 +154,7 @@
             sysVoltage: 3.3,
             scaleX: 3,
             voltageThreshold: 2.0,  
-            debounceDelay: 500,        // 默认放宽到 500ms（可调）
+            debounceDelay: 500,        
             dryEyeBpmThreshold: 25  
         };
 
@@ -169,12 +169,15 @@
         let isConnected = false;
         let isPaused = false;
         
-        // === 改进型双保险状态机变量 ===
-        let lastTriggerTime = 0;              // 上一次成功检测到第一个高电平的时间
-        let isWaitingForSignalToDrop = false; // 核心状态锁：是否正在等待信号彻底回落到红线下方
-        
+        // === 状态机与频率计算核心变量 ===
+        let lastTriggerTime = 0;              
+        let isWaitingForSignalToDrop = false; 
         let binksTimestamps = [];     
         let systemStartTime = null;   
+        let currentBpmValue = 0;      // 存储当前秒计算出来的最新实时 BPM
+
+        // === 新增：用于按秒记录导出的环形缓冲器 ===
+        let secondLogMap = new Map(); // Key: "hh:mm:ss", Value: { count: 累计次数, fre: 当前BPM }
 
         let bleDevice = null;
         let bleCharacteristic = null;
@@ -207,7 +210,8 @@
             return (adcVal / globalConfig.adcMax) * globalConfig.sysVoltage;
         }
 
-        function formatSystemTime(dateObj) {
+        // 包含毫秒的时间戳，供波形图及硬件流对齐使用
+        function formatSystemTimeWithMs(dateObj) {
             const pad = (n) => String(n).padStart(2, '0');
             const h = pad(dateObj.getHours());
             const m = pad(dateObj.getMinutes());
@@ -216,36 +220,40 @@
             return `${h}:${m}:${s}.${ms}`;
         }
 
-        // === 改进型双保险电平时间流状态机 ===
-        function processRealtimeSignal(adcRawVal) {
+        // 精炼到“秒”的时间戳，供秒级 CSV 数据聚合使用
+        function formatSystemTimeBySecond(dateObj) {
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${pad(dateObj.getHours())}:${pad(dateObj.getMinutes())}:${pad(dateObj.getSeconds())}`;
+        }
+
+        function processRealtimeSignal(adcRawVal, timeObject) {
             const currentVoltage = adcToPhys(adcRawVal);
-            const now = Date.now();
+            const now = timeObject.getTime();
             
             if (!systemStartTime) {
                 systemStartTime = now;
             }
 
-            // 保险1：如果在设定的死区延时（例如500ms）内，绝对拒绝二次触发，直接丢弃
+            // 1. 200~500ms 强制死区时间拦截
             if (now - lastTriggerTime < globalConfig.debounceDelay) {
-                // 如果在死区期间电平依然很高，我们直接标记“死区过后必须先看到低电平”
                 if (currentVoltage >= globalConfig.voltageThreshold) {
                     isWaitingForSignalToDrop = true;
                 }
                 return; 
             }
 
-            // 保形2：死区时间虽然过了，但是如果信号【还没有彻底跌破过红线】
+            // 2. 必须彻底回落到红线以下才释放锁
             if (isWaitingForSignalToDrop) {
                 if (currentVoltage < globalConfig.voltageThreshold) {
-                    isWaitingForSignalToDrop = false; // 只有彻底回落到红线以下，才解开这把状态锁
+                    isWaitingForSignalToDrop = false; 
                 }
-                return; // 只要波形还赖在红线上方，就一直拦截，防止同一个宽包络重复计总数
+                return; 
             }
 
-            // 两个保险全部安全通过后，开始迎接全新的大包络上升沿
+            // 3. 上升沿有效触发点
             if (currentVoltage >= globalConfig.voltageThreshold) {
-                lastTriggerTime = now;           // 立刻拉起死区时间保护
-                isWaitingForSignalToDrop = true; // 立刻拉起回落状态保护锁
+                lastTriggerTime = now;           
+                isWaitingForSignalToDrop = true; 
                 registerValidBlink(now);
             }
         }
@@ -274,6 +282,7 @@
                 blinkRateUI.className = "text-xs text-slate-500 font-mono";
                 diagnosisUI.innerText = "等待窗口对齐";
                 diagnosisUI.className = "text-xs font-bold pt-1 text-slate-500";
+                currentBpmValue = 0; 
                 return;
             }
 
@@ -281,6 +290,7 @@
             const validBlinksInWindow = binksTimestamps.filter(ts => ts >= cutoffTime).length;
             
             const bpm = Math.round((validBlinksInWindow / 40) * 60);
+            currentBpmValue = bpm; // 同步给全局变量供秒级归档读取
             
             blinkRateUI.innerText = `${bpm} BPM`;
             blinkRateUI.className = "text-xl md:text-2xl font-bold text-blue-400 font-mono";
@@ -294,13 +304,27 @@
             }
         }
 
-        setInterval(evalBlinkFrequency, 1000);
+        // 核心定时器：每秒触发一次频率刷新，并对当前秒进行数据归档汇算
+        setInterval(() => {
+            evalBlinkFrequency();
+            
+            // 数据在在线接收时，才向 Map 容器内存入当前的秒快照
+            if (isConnected && !isPaused && systemStartTime) {
+                const secKey = formatSystemTimeBySecond(new Date());
+                secondLogMap.set(secKey, {
+                    count: binksTimestamps.length,
+                    fre: currentBpmValue
+                });
+            }
+        }, 1000);
 
         function resetMetrics() {
             binksTimestamps = [];
             systemStartTime = Date.now();
             lastTriggerTime = 0;
             isWaitingForSignalToDrop = false;
+            currentBpmValue = 0;
+            secondLogMap.clear(); // 清空按秒导出的缓冲区
             document.getElementById('blinkCount').innerText = "0 次";
             document.getElementById('blinkRate').innerText = "重置中...";
             document.getElementById('diagnosisResult').innerText = "未激活诊断";
@@ -410,15 +434,30 @@
             incomingBuffer = parts.pop(); 
 
             const now = new Date();
-            const formattedTime = formatSystemTime(now);
+            const formattedTimeWithMs = formatSystemTimeWithMs(now);
+            const formattedTimeBySecond = formatSystemTimeBySecond(now);
 
             parts.forEach(part => {
                 const cleanStr = part.trim();
                 if (cleanStr.length > 0) {
                     const val = parseInt(cleanStr);
                     if (!isNaN(val) && val >= 0 && val <= 65535) {
-                        processRealtimeSignal(val);
-                        dataBuffer.push({ val: val, time: now, tsText: formattedTime });
+                        // 1. 送入双保险边缘防抖状态机
+                        processRealtimeSignal(val, now);
+                        
+                        // 2. 实时将当前这一秒的基础状态推入 Map 中（以防定时器同步时差出现漏记）
+                        if (!secondLogMap.has(formattedTimeBySecond)) {
+                            secondLogMap.set(formattedTimeBySecond, {
+                                count: binksTimestamps.length,
+                                fre: currentBpmValue
+                            });
+                        } else {
+                            // 如果同一秒有多个采样，实时更新最新累计的 blinking 总次数
+                            secondLogMap.get(formattedTimeBySecond).count = binksTimestamps.length;
+                        }
+
+                        // 3. 缓入显示级高速波形环形流
+                        dataBuffer.push({ val: val, time: now, tsText: formattedTimeWithMs });
                         if (dataBuffer.length > MAX_HISTORY_POINTS) {
                             dataBuffer.shift();
                         }
@@ -476,19 +515,30 @@
             document.getElementById('pauseOverlay').classList.toggle('hidden', !isPaused);
         }
 
+        // === 修改：按每秒归纳汇总导出，并解决 Excel 中文表头乱码问题 ===
         function exportCSV() {
-            if (dataBuffer.length === 0) return alert("无可供导出的历史采样快照。");
-            let csvContent = "data:text/csv;charset=utf-8,系统时间轴,原始采样(ADC),物理等效电压(V)\n";
-            dataBuffer.forEach(item => {
-                csvContent += `${item.tsText},${item.val},${adcToPhys(item.val).toFixed(4)}\n`;
+            if (secondLogMap.size === 0) return alert("当前暂无可以归纳生成的秒级历史数据快照。");
+            
+            // 解决乱码核心：增加 \uFEFF 字符，明确告诉 Excel 这是 UTF-8 编码
+            let csvContent = "\uFEFFtime,count,fre\n";
+            
+            // 升序遍历 Map，将每一秒钟的汇总合并到 CSV 字符串中
+            const sortedSeconds = Array.from(secondLogMap.keys()).sort();
+            sortedSeconds.forEach(secKey => {
+                const logItem = secondLogMap.get(secKey);
+                csvContent += `${secKey},${logItem.count},${logItem.fre}\n`;
             });
-            const encodedUri = encodeURI(csvContent);
+            
+            // 使用 Blob 对象设置明确的媒体和编码，确保在各类表格软件中完美对齐、拒绝乱码
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
             const link = document.createElement("a");
-            link.href = encodedUri;
-            link.download = `blink_raw_dataset_${new Date().getTime()}.csv`;
+            link.href = url;
+            link.download = `blink_second_summary_${new Date().getTime()}.csv`;
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
+            URL.revokeObjectURL(url);
         }
 
         function updateStatusUI(status) {
