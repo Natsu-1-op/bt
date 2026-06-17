@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>眨眼检测与干眼症分析上位机 (200ms防抖版)</title>
+    <title>眨眼检测与干眼症分析上位机 (双保险滤波版)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
@@ -107,18 +107,22 @@
 
     <div class="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4 md:h-24">
         
-        <div class="bg-slate-800/40 p-3 rounded-lg border border-slate-700 flex flex-wrap items-center justify-between gap-2">
-            <div class="flex items-center space-x-3">
+        <div class="bg-slate-800/40 p-3 rounded-lg border border-slate-700 flex flex-wrap items-center justify-between p-2 gap-2">
+            <div class="flex items-center space-x-2">
                 <div>
-                    <label class="text-[11px] text-slate-400 block mb-0.5">高电平触发阈值 (V)</label>
-                    <input type="number" id="cfgThreshold" value="2.00" step="0.05" min="0" max="3.3" class="w-20 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm font-bold font-mono text-emerald-400 text-center focus:border-emerald-500 outline-none" onchange="updateSettings()">
+                    <label class="text-[10px] text-slate-400 block mb-0.5">检测阈值 (V)</label>
+                    <input type="number" id="cfgThreshold" value="2.00" step="0.05" min="0" max="3.3" class="w-16 bg-slate-900 border border-slate-600 rounded px-1.5 py-0.5 text-xs font-bold font-mono text-emerald-400 text-center focus:border-emerald-500 outline-none" onchange="updateSettings()">
                 </div>
                 <div>
-                    <label class="text-[11px] text-slate-400 block mb-0.5">干眼症判定阈值 (BPM)</label>
-                    <input type="number" id="cfgDryThreshold" value="25" step="1" min="1" max="100" class="w-20 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm font-bold font-mono text-red-400 text-center focus:border-red-500 outline-none" onchange="updateSettings()">
+                    <label class="text-[10px] text-slate-400 block mb-0.5">防抖死区 (ms)</label>
+                    <input type="number" id="cfgDebounce" value="500" step="50" min="100" max="2000" class="w-16 bg-slate-900 border border-slate-600 rounded px-1.5 py-0.5 text-xs font-bold font-mono text-yellow-400 text-center focus:border-yellow-500 outline-none" onchange="updateSettings()">
+                </div>
+                <div>
+                    <label class="text-[10px] text-slate-400 block mb-0.5">干眼阈值 (BPM)</label>
+                    <input type="number" id="cfgDryThreshold" value="25" step="1" min="1" max="100" class="w-16 bg-slate-900 border border-slate-600 rounded px-1.5 py-0.5 text-xs font-bold font-mono text-red-400 text-center focus:border-red-500 outline-none" onchange="updateSettings()">
                 </div>
             </div>
-            <div class="text-[10px] text-slate-500 max-w-[140px]">提示：正常的静息眨眼频率通常为 15-20 次/分钟。</div>
+            <div class="text-[10px] text-slate-500">提示：死区时间需略大于单个包络的持续总长度。</div>
         </div>
 
         <div class="bg-slate-800/40 p-3 rounded-lg border border-slate-700 flex items-center justify-between gap-4">
@@ -150,6 +154,7 @@
             sysVoltage: 3.3,
             scaleX: 3,
             voltageThreshold: 2.0,  
+            debounceDelay: 500,        // 默认放宽到 500ms（可调）
             dryEyeBpmThreshold: 25  
         };
 
@@ -164,9 +169,9 @@
         let isConnected = false;
         let isPaused = false;
         
-        // === 200ms 防抖核心变量 ===
-        let lastTriggerTime = 0;       // 上一次成功触发眨眼的时间戳（毫秒）
-        const DEBOUNCE_DELAY = 200;    // 强行设定的 200ms 滤波死区时间窗
+        // === 改进型双保险状态机变量 ===
+        let lastTriggerTime = 0;              // 上一次成功检测到第一个高电平的时间
+        let isWaitingForSignalToDrop = false; // 核心状态锁：是否正在等待信号彻底回落到红线下方
         
         let binksTimestamps = [];     
         let systemStartTime = null;   
@@ -194,6 +199,7 @@
         function updateSettings() {
             globalConfig.scaleX = parseFloat(document.getElementById('scaleX').value) || 3;
             globalConfig.voltageThreshold = parseFloat(document.getElementById('cfgThreshold').value) || 2.0;
+            globalConfig.debounceDelay = parseFloat(document.getElementById('cfgDebounce').value) || 500;
             globalConfig.dryEyeBpmThreshold = parseFloat(document.getElementById('cfgDryThreshold').value) || 25;
         }
 
@@ -210,7 +216,7 @@
             return `${h}:${m}:${s}.${ms}`;
         }
 
-        // === 200ms 时间窗防抖处理核心状态机 ===
+        // === 改进型双保险电平时间流状态机 ===
         function processRealtimeSignal(adcRawVal) {
             const currentVoltage = adcToPhys(adcRawVal);
             const now = Date.now();
@@ -219,21 +225,33 @@
                 systemStartTime = now;
             }
 
-            // 1. 检查是否仍处于 200ms 强制死区锁定期内？
-            if (now - lastTriggerTime < DEBOUNCE_DELAY) {
-                return; // 直接无视，丢弃高频抖动的数据点
+            // 保险1：如果在设定的死区延时（例如500ms）内，绝对拒绝二次触发，直接丢弃
+            if (now - lastTriggerTime < globalConfig.debounceDelay) {
+                // 如果在死区期间电平依然很高，我们直接标记“死区过后必须先看到低电平”
+                if (currentVoltage >= globalConfig.voltageThreshold) {
+                    isWaitingForSignalToDrop = true;
+                }
+                return; 
             }
 
-            // 2. 200ms 冷却结束后，重新开始监测是否有第一个高电平上升沿冲破红线
+            // 保形2：死区时间虽然过了，但是如果信号【还没有彻底跌破过红线】
+            if (isWaitingForSignalToDrop) {
+                if (currentVoltage < globalConfig.voltageThreshold) {
+                    isWaitingForSignalToDrop = false; // 只有彻底回落到红线以下，才解开这把状态锁
+                }
+                return; // 只要波形还赖在红线上方，就一直拦截，防止同一个宽包络重复计总数
+            }
+
+            // 两个保险全部安全通过后，开始迎接全新的大包络上升沿
             if (currentVoltage >= globalConfig.voltageThreshold) {
-                lastTriggerTime = now; // 锁死当前时间戳，再次拉起 200ms 的死区保护
+                lastTriggerTime = now;           // 立刻拉起死区时间保护
+                isWaitingForSignalToDrop = true; // 立刻拉起回落状态保护锁
                 registerValidBlink(now);
             }
         }
 
         function registerValidBlink(timestamp) {
             binksTimestamps.push(timestamp);
-            
             document.getElementById('blinkCount').innerText = binksTimestamps.length + " 次";
             
             const blinkCountUI = document.getElementById('blinkCount');
@@ -282,6 +300,7 @@
             binksTimestamps = [];
             systemStartTime = Date.now();
             lastTriggerTime = 0;
+            isWaitingForSignalToDrop = false;
             document.getElementById('blinkCount').innerText = "0 次";
             document.getElementById('blinkRate').innerText = "重置中...";
             document.getElementById('diagnosisResult').innerText = "未激活诊断";
