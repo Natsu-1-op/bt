@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>我测</title>
+    <title>眨眼检测与干眼症分析上位机 (200ms防抖版)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
@@ -62,7 +62,7 @@
 
     <header class="flex flex-wrap justify-between items-center mb-3 md:mb-4 gap-2 bg-slate-800/40 p-3 rounded-lg border border-slate-700/50">
         <div class="flex items-center space-x-4">
-            <h1 class="text-lg md:text-2xl font-bold neon-text text-emerald-400 truncate">我测</h1>
+            <h1 class="text-lg md:text-2xl font-bold neon-text text-emerald-400 truncate">眨眼检测上位机</h1>
             <div id="connectionStatus" class="flex items-center text-xs md:text-sm bg-slate-900/60 px-2 py-1 rounded">
                 <span class="status-dot status-disconnected" id="statusDot"></span>
                 <span id="statusText" class="text-slate-400">设备离线</span>
@@ -78,7 +78,7 @@
                 <div class="text-[10px] text-slate-500">眨眼频率 (BPM)</div>
                 <div class="text-xl md:text-2xl font-bold text-blue-400 font-mono" id="blinkRate">等待数据...</div>
             </div>
-            <div class="text-center bg-slate-900/80 px-3 py-1 rounded border border-slate-700min-w-[120px]">
+            <div class="text-center bg-slate-900/80 px-3 py-1 rounded border border-slate-700 min-w-[120px]">
                 <div class="text-[10px] text-slate-500">干眼症评估结果</div>
                 <div class="text-xs md:text-sm font-bold pt-1 text-slate-400" id="diagnosisResult">未激活诊断</div>
             </div>
@@ -125,7 +125,7 @@
             <div class="flex-1 flex items-center space-x-2">
                 <span class="text-xs text-slate-400 whitespace-nowrap">时间轴缩放</span>
                 <span class="text-[10px] text-slate-500">密</span>
-                <input type="range" min="1" max="15" step="0.5" value="3" class="flex-1 animate-pulse" id="scaleX" oninput="updateSettings()">
+                <input type="range" min="1" max="15" step="0.5" value="3" class="flex-1" id="scaleX" oninput="updateSettings()">
                 <span class="text-[10px] text-slate-500">疏</span>
             </div>
             <div class="flex items-center space-x-2 bg-slate-900/40 p-2 rounded border border-slate-700/60">
@@ -145,32 +145,32 @@
     </div>
 
     <script>
-        // === 全局业务与硬件映射配置 ===
         let globalConfig = {
             adcMax: 4095,
             sysVoltage: 3.3,
             scaleX: 3,
-            voltageThreshold: 2.0,  // 触发检测的高电平电压阈值
-            dryEyeBpmThreshold: 25  // 判定为干眼症的 BPM 频率阈值
+            voltageThreshold: 2.0,  
+            dryEyeBpmThreshold: 25  
         };
 
         const CANVAS_BG = '#000000';
         const GRID_COLOR = '#1e293b';
         const LINE_COLOR = '#10b981';
-        const THRESHOLD_LINE_COLOR = '#ef4444'; // 阈值参考线颜色
+        const THRESHOLD_LINE_COLOR = '#ef4444'; 
         const MAX_HISTORY_POINTS = 3000;
 
-        let dataBuffer = [];      // 包含 { val: adc值, time: Date对象, tsText: 格式化时间文本 }
+        let dataBuffer = [];      
         let incomingBuffer = "";
         let isConnected = false;
         let isPaused = false;
         
-        // === 眨眼核心核心状态算法机 ===
-        let isHighLevelState = false; // 当前硬件是否处于高电平状态包络中
-        let binksTimestamps = [];     // 存储每次第一个高电平跳变发生的绝对时间戳（毫秒）
-        let systemStartTime = null;   // 数据流开始接收后的系统对齐零点时间
+        // === 200ms 防抖核心变量 ===
+        let lastTriggerTime = 0;       // 上一次成功触发眨眼的时间戳（毫秒）
+        const DEBOUNCE_DELAY = 200;    // 强行设定的 200ms 滤波死区时间窗
+        
+        let binksTimestamps = [];     
+        let systemStartTime = null;   
 
-        // === 蓝牙核心底层句柄 ===
         let bleDevice = null;
         let bleCharacteristic = null;
         const textDecoder = new TextDecoder();
@@ -201,7 +201,6 @@
             return (adcVal / globalConfig.adcMax) * globalConfig.sysVoltage;
         }
 
-        // 格式化系统时间戳（包含毫秒，用于横轴高精度渲染）
         function formatSystemTime(dateObj) {
             const pad = (n) => String(n).padStart(2, '0');
             const h = pad(dateObj.getHours());
@@ -211,39 +210,32 @@
             return `${h}:${m}:${s}.${ms}`;
         }
 
-        // === 信号处理与突变检测状态机 ===
+        // === 200ms 时间窗防抖处理核心状态机 ===
         function processRealtimeSignal(adcRawVal) {
             const currentVoltage = adcToPhys(adcRawVal);
+            const now = Date.now();
             
-            // 首次接受到有效硬件点数据时，锚定系统计算基准零点
             if (!systemStartTime) {
-                systemStartTime = Date.now();
+                systemStartTime = now;
             }
 
-            // 边缘触发检测核心状态转换
+            // 1. 检查是否仍处于 200ms 强制死区锁定期内？
+            if (now - lastTriggerTime < DEBOUNCE_DELAY) {
+                return; // 直接无视，丢弃高频抖动的数据点
+            }
+
+            // 2. 200ms 冷却结束后，重新开始监测是否有第一个高电平上升沿冲破红线
             if (currentVoltage >= globalConfig.voltageThreshold) {
-                if (!isHighLevelState) {
-                    // 【突变锁定】：瞬间由低电平跳变到第一个高电平点
-                    isHighLevelState = true; 
-                    registerValidBlink();
-                }
-                // 如果已经在高电平状态内，则属于后续由于眨眼动作产生的包络或震荡，直接忽略不计入计数
-            } else {
-                // 回落到阈值下方，释放状态锁，允许接受下一次波形的上升沿触发
-                if (isHighLevelState) {
-                    isHighLevelState = false;
-                }
+                lastTriggerTime = now; // 锁死当前时间戳，再次拉起 200ms 的死区保护
+                registerValidBlink(now);
             }
         }
 
-        // 注册一次合法的眨眼信号点
-        function registerValidBlink() {
-            const now = Date.now();
-            binksTimestamps.push(now);
+        function registerValidBlink(timestamp) {
+            binksTimestamps.push(timestamp);
             
             document.getElementById('blinkCount').innerText = binksTimestamps.length + " 次";
             
-            // 播放界面数值瞬时跳变反馈特效
             const blinkCountUI = document.getElementById('blinkCount');
             blinkCountUI.classList.add('scale-110', 'text-yellow-400');
             setTimeout(() => blinkCountUI.classList.remove('scale-110', 'text-yellow-400'), 150);
@@ -251,7 +243,6 @@
             evalBlinkFrequency();
         }
 
-        // 实时更新眨眼频率及评估干眼症
         function evalBlinkFrequency() {
             if (!systemStartTime) return;
             
@@ -260,7 +251,6 @@
             const diagnosisUI = document.getElementById('diagnosisResult');
 
             if (elapsedSeconds < 40) {
-                // 首次检测 40 秒内，进行锁屏倒计时提示
                 const remaining = Math.ceil(40 - elapsedSeconds);
                 blinkRateUI.innerText = `数据积累中(${remaining}s)`;
                 blinkRateUI.className = "text-xs text-slate-500 font-mono";
@@ -269,18 +259,14 @@
                 return;
             }
 
-            // 后续逻辑：滑动时间窗口实时追踪近 40 秒内眨眼包数量
             const cutoffTime = Date.now() - 40000;
             const validBlinksInWindow = binksTimestamps.filter(ts => ts >= cutoffTime).length;
             
-            // 将 40 秒内的计数值等比换算归一化为每分钟频率 (BPM)
-            // 公式： $$BPM = \frac{\text{validBlinksInWindow}}{40} \times 60$$
             const bpm = Math.round((validBlinksInWindow / 40) * 60);
             
             blinkRateUI.innerText = `${bpm} BPM`;
             blinkRateUI.className = "text-xl md:text-2xl font-bold text-blue-400 font-mono";
 
-            // 业务评估栏：判断是否大于用户设定的诊断干眼症阈值
             if (bpm > globalConfig.dryEyeBpmThreshold) {
                 diagnosisUI.innerText = "⚠️ 疑似干眼症症状";
                 diagnosisUI.className = "text-xs font-bold pt-1 text-red-500 animate-bounce";
@@ -290,19 +276,18 @@
             }
         }
 
-        // 每秒自动触发刷新，确保在用户不眨眼时，频率也能随着时间窗口向后滑动而实时归零更新
         setInterval(evalBlinkFrequency, 1000);
 
         function resetMetrics() {
             binksTimestamps = [];
             systemStartTime = Date.now();
+            lastTriggerTime = 0;
             document.getElementById('blinkCount').innerText = "0 次";
             document.getElementById('blinkRate').innerText = "重置中...";
             document.getElementById('diagnosisResult').innerText = "未激活诊断";
             document.getElementById('diagnosisResult').className = "text-xs font-bold pt-1 text-slate-400";
         }
 
-        // === 核心数据流绘图机 ===
         function draw() {
             requestAnimationFrame(draw);
             if (dataBuffer.length === 0) {
@@ -318,13 +303,11 @@
             ctx.fillStyle = CANVAS_BG;
             ctx.fillRect(0, 0, width, height);
 
-            // 根据缩放因子，动态计算屏幕可以容纳展现的硬件序列点数
             const maxPointsToShow = Math.floor(width / (globalConfig.scaleX * 0.4));
             const viewData = dataBuffer.slice(-maxPointsToShow);
 
             drawGrid(width, height, viewData);
 
-            // 绘制当前高电平触发阈值的红色警戒参考线
             const thresholdY = height * (1 - (globalConfig.voltageThreshold / globalConfig.sysVoltage));
             ctx.strokeStyle = THRESHOLD_LINE_COLOR;
             ctx.lineWidth = 1;
@@ -339,7 +322,6 @@
             ctx.font = '10px sans-serif';
             ctx.fillText(`检测阈值: ${globalConfig.voltageThreshold.toFixed(2)}V`, width - 90, thresholdY - 4);
 
-            // 渲染时序波形路径
             ctx.beginPath();
             ctx.strokeStyle = LINE_COLOR;
             ctx.lineWidth = 2.5;
@@ -359,7 +341,6 @@
         }
 
         function drawGrid(w, h, viewData) {
-            // Y 轴多级电压梯度刻度线
             for (let i = 0; i <= 4; i++) {
                 const ratio = i / 4;
                 const y = h * (1 - ratio);
@@ -374,7 +355,6 @@
                 ctx.fillText(`${val.toFixed(1)}V`, 5, y - 4);
             }
 
-            // X 轴时间映射线转换：均匀采样抽头提取当前波段所对应的具体系统时间戳
             if (viewData.length > 1) {
                 ctx.strokeStyle = GRID_COLOR;
                 ctx.lineWidth = 1;
@@ -396,13 +376,11 @@
                     ctx.lineTo(x, h);
                     ctx.stroke();
 
-                    // 呈现当前帧采样点绑定的系统真实时间标签
                     ctx.fillText(viewData[dataIdx].tsText, x - 20, h - 6);
                 }
             }
         }
 
-        // === 数据管道底层总线输入驱动 ===
         function handleIncomingData(chunk) {
             if (isPaused) return;
 
@@ -420,10 +398,7 @@
                 if (cleanStr.length > 0) {
                     const val = parseInt(cleanStr);
                     if (!isNaN(val) && val >= 0 && val <= 65535) {
-                        // 1. 同步送入突变检测状态机
                         processRealtimeSignal(val);
-
-                        // 2. 存入波形环形历史回放缓冲区
                         dataBuffer.push({ val: val, time: now, tsText: formattedTime });
                         if (dataBuffer.length > MAX_HISTORY_POINTS) {
                             dataBuffer.shift();
@@ -433,7 +408,6 @@
             });
         }
 
-        // === 蓝牙链路行为管理器 ===
         async function toggleBluetooth() {
             if (isConnected && bleDevice && bleDevice.gatt.connected) {
                 bleDevice.gatt.disconnect();
@@ -448,7 +422,6 @@
                 return;
             }
             try {
-                // 默认监听通用串口透传 FFE0 服务
                 bleDevice = await navigator.bluetooth.requestDevice({
                     acceptAllDevices: true,
                     optionalServices: [0xffe0]
@@ -462,7 +435,7 @@
 
                 const server = await bleDevice.gatt.connect();
                 const service = await server.getPrimaryService(0xffe0);
-                bleCharacteristic = await service.getCharacteristic(0xffe2); // 接收数据特征
+                bleCharacteristic = await service.getCharacteristic(0xffe2); 
                 await bleCharacteristic.startNotifications();
                 bleCharacteristic.addEventListener('characteristicvaluechanged', (e) => {
                     const chunk = textDecoder.decode(e.target.value);
@@ -471,7 +444,7 @@
 
                 isConnected = true;
                 updateStatusUI('ble');
-                systemStartTime = Date.now(); // 挂载零点
+                systemStartTime = Date.now(); 
             } catch (error) {
                 console.error(error);
                 isConnected = false;
