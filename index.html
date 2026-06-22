@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>眨眼检测与干眼症分析上位机 (按秒导出精炼版)</title>
+    <title>眨眼检测与干眼症</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
@@ -62,7 +62,7 @@
 
     <header class="flex flex-wrap justify-between items-center mb-3 md:mb-4 gap-2 bg-slate-800/40 p-3 rounded-lg border border-slate-700/50">
         <div class="flex items-center space-x-4">
-            <h1 class="text-lg md:text-2xl font-bold neon-text text-emerald-400 truncate">眨眼检测上位机</h1>
+            <h1 class="text-lg md:text-2xl font-bold neon-text text-emerald-400 truncate">我测</h1>
             <div id="connectionStatus" class="flex items-center text-xs md:text-sm bg-slate-900/60 px-2 py-1 rounded">
                 <span class="status-dot status-disconnected" id="statusDot"></span>
                 <span id="statusText" class="text-slate-400">设备离线</span>
@@ -79,12 +79,12 @@
                 <div class="text-xl md:text-2xl font-bold text-blue-400 font-mono" id="blinkRate">等待数据...</div>
             </div>
             <div class="text-center bg-slate-900/80 px-3 py-1 rounded border border-slate-700 min-w-[120px]">
-                <div class="text-[10px] text-slate-500">干眼症评估结果</div>
+                <div class="text-[10px] text-slate-500">评估结果</div>
                 <div class="text-xs md:text-sm font-bold pt-1 text-slate-400" id="diagnosisResult">未激活诊断</div>
             </div>
             
             <button onclick="toggleBluetooth()" id="btnBle" class="bg-blue-600 active:bg-blue-800 hover:bg-blue-700 text-white px-4 py-2 rounded text-xs md:text-sm font-bold transition flex items-center gap-1 shadow-lg shadow-blue-900/20">
-                <span id="txtBle">连接蓝牙外设</span>
+                <span id="txtBle">连接蓝牙</span>
             </button>
         </div>
     </header>
@@ -111,7 +111,7 @@
             <div class="flex items-center space-x-2">
                 <div>
                     <label class="text-[10px] text-slate-400 block mb-0.5">检测阈值 (V)</label>
-                    <input type="number" id="cfgThreshold" value="2.00" step="0.05" min="0" max="3.3" class="w-16 bg-slate-900 border border-slate-600 rounded px-1.5 py-0.5 text-xs font-bold font-mono text-emerald-400 text-center focus:border-emerald-500 outline-none" onchange="updateSettings()">
+                    <input type="number" id="cfgThreshold" value="1.50" step="0.05" min="0" max="3.3" class="w-16 bg-slate-900 border border-slate-600 rounded px-1.5 py-0.5 text-xs font-bold font-mono text-emerald-400 text-center focus:border-emerald-500 outline-none" onchange="updateSettings()">
                 </div>
                 <div>
                     <label class="text-[10px] text-slate-400 block mb-0.5">防抖死区 (ms)</label>
@@ -122,7 +122,7 @@
                     <input type="number" id="cfgDryThreshold" value="25" step="1" min="1" max="100" class="w-16 bg-slate-900 border border-slate-600 rounded px-1.5 py-0.5 text-xs font-bold font-mono text-red-400 text-center focus:border-red-500 outline-none" onchange="updateSettings()">
                 </div>
             </div>
-            <div class="text-[10px] text-slate-500">提示：数据将按秒整理归类，拒绝臃肿。</div>
+            <div class="text-[10px] text-slate-500">提示：数据将按秒整理</div>
         </div>
 
         <div class="bg-slate-800/40 p-3 rounded-lg border border-slate-700 flex items-center justify-between gap-4">
@@ -153,7 +153,7 @@
             adcMax: 4095,
             sysVoltage: 3.3,
             scaleX: 3,
-            voltageThreshold: 2.0,  
+            voltageThreshold: 1.5,  
             debounceDelay: 500,        
             dryEyeBpmThreshold: 25  
         };
@@ -169,15 +169,13 @@
         let isConnected = false;
         let isPaused = false;
         
-        // === 状态机与频率计算核心变量 ===
         let lastTriggerTime = 0;              
         let isWaitingForSignalToDrop = false; 
         let binksTimestamps = [];     
         let systemStartTime = null;   
-        let currentBpmValue = 0;      // 存储当前秒计算出来的最新实时 BPM
+        let currentBpmValue = 0;      
 
-        // === 新增：用于按秒记录导出的环形缓冲器 ===
-        let secondLogMap = new Map(); // Key: "hh:mm:ss", Value: { count: 累计次数, fre: 当前BPM }
+        let secondLogMap = new Map(); 
 
         let bleDevice = null;
         let bleCharacteristic = null;
@@ -201,7 +199,7 @@
 
         function updateSettings() {
             globalConfig.scaleX = parseFloat(document.getElementById('scaleX').value) || 3;
-            globalConfig.voltageThreshold = parseFloat(document.getElementById('cfgThreshold').value) || 2.0;
+            globalConfig.voltageThreshold = parseFloat(document.getElementById('cfgThreshold').value) || 1.5;
             globalConfig.debounceDelay = parseFloat(document.getElementById('cfgDebounce').value) || 500;
             globalConfig.dryEyeBpmThreshold = parseFloat(document.getElementById('cfgDryThreshold').value) || 25;
         }
@@ -210,7 +208,6 @@
             return (adcVal / globalConfig.adcMax) * globalConfig.sysVoltage;
         }
 
-        // 包含毫秒的时间戳，供波形图及硬件流对齐使用
         function formatSystemTimeWithMs(dateObj) {
             const pad = (n) => String(n).padStart(2, '0');
             const h = pad(dateObj.getHours());
@@ -220,7 +217,6 @@
             return `${h}:${m}:${s}.${ms}`;
         }
 
-        // 精炼到“秒”的时间戳，供秒级 CSV 数据聚合使用
         function formatSystemTimeBySecond(dateObj) {
             const pad = (n) => String(n).padStart(2, '0');
             return `${pad(dateObj.getHours())}:${pad(dateObj.getMinutes())}:${pad(dateObj.getSeconds())}`;
@@ -234,7 +230,11 @@
                 systemStartTime = now;
             }
 
-            // 1. 200~500ms 强制死区时间拦截
+            // 新增限制：最开始的 3 秒内，属于绝对锁死静置期，完全不计眨眼总数
+            if (now - systemStartTime < 3000) {
+                return;
+            }
+
             if (now - lastTriggerTime < globalConfig.debounceDelay) {
                 if (currentVoltage >= globalConfig.voltageThreshold) {
                     isWaitingForSignalToDrop = true;
@@ -242,7 +242,6 @@
                 return; 
             }
 
-            // 2. 必须彻底回落到红线以下才释放锁
             if (isWaitingForSignalToDrop) {
                 if (currentVoltage < globalConfig.voltageThreshold) {
                     isWaitingForSignalToDrop = false; 
@@ -250,7 +249,6 @@
                 return; 
             }
 
-            // 3. 上升沿有效触发点
             if (currentVoltage >= globalConfig.voltageThreshold) {
                 lastTriggerTime = now;           
                 isWaitingForSignalToDrop = true; 
@@ -276,6 +274,18 @@
             const blinkRateUI = document.getElementById('blinkRate');
             const diagnosisUI = document.getElementById('diagnosisResult');
 
+            // 1. 最开头的 3 秒内，精确显示倒计时提示
+            if (elapsedSeconds < 3) {
+                const countdown = Math.ceil(3 - elapsedSeconds);
+                blinkRateUI.innerText = `即将开始计数(${countdown}s)`;
+                blinkRateUI.className = "text-xs text-yellow-500 font-mono";
+                diagnosisUI.innerText = "等待窗口对齐";
+                diagnosisUI.className = "text-xs font-bold pt-1 text-slate-500";
+                currentBpmValue = 0;
+                return;
+            }
+
+            // 2. 3 秒到 40 秒之间，显示长周期数据积累提示
             if (elapsedSeconds < 40) {
                 const remaining = Math.ceil(40 - elapsedSeconds);
                 blinkRateUI.innerText = `数据积累中(${remaining}s)`;
@@ -286,36 +296,38 @@
                 return;
             }
 
+            // 3. 40 秒满，触发滑动时间窗口频率计算
             const cutoffTime = Date.now() - 40000;
             const validBlinksInWindow = binksTimestamps.filter(ts => ts >= cutoffTime).length;
             
             const bpm = Math.round((validBlinksInWindow / 40) * 60);
-            currentBpmValue = bpm; // 同步给全局变量供秒级归档读取
+            currentBpmValue = bpm; 
             
             blinkRateUI.innerText = `${bpm} BPM`;
             blinkRateUI.className = "text-xl md:text-2xl font-bold text-blue-400 font-mono";
 
             if (bpm > globalConfig.dryEyeBpmThreshold) {
-                diagnosisUI.innerText = "⚠️ 疑似干眼症症状";
-                diagnosisUI.className = "text-xs font-bold pt-1 text-red-500 animate-bounce";
+                diagnosisUI.innerText = " 疑似干眼症症状";
+                diagnosisUI.className = "text-xs font-bold pt-1 text-red-500";
             } else {
                 diagnosisUI.innerText = "指标正常";
                 diagnosisUI.className = "text-xs font-bold pt-1 text-emerald-400";
             }
         }
 
-        // 核心定时器：每秒触发一次频率刷新，并对当前秒进行数据归档汇算
         setInterval(() => {
+            // 如果处于冷冻/暂停状态，彻底挂起数据记录和频率推算
+            if (isPaused || !isConnected || !systemStartTime) {
+                return; 
+            }
+
             evalBlinkFrequency();
             
-            // 数据在在线接收时，才向 Map 容器内存入当前的秒快照
-            if (isConnected && !isPaused && systemStartTime) {
-                const secKey = formatSystemTimeBySecond(new Date());
-                secondLogMap.set(secKey, {
-                    count: binksTimestamps.length,
-                    fre: currentBpmValue
-                });
-            }
+            const secKey = formatSystemTimeBySecond(new Date());
+            secondLogMap.set(secKey, {
+                count: binksTimestamps.length,
+                fre: currentBpmValue
+            });
         }, 1000);
 
         function resetMetrics() {
@@ -324,10 +336,10 @@
             lastTriggerTime = 0;
             isWaitingForSignalToDrop = false;
             currentBpmValue = 0;
-            secondLogMap.clear(); // 清空按秒导出的缓冲区
+            secondLogMap.clear(); 
             document.getElementById('blinkCount').innerText = "0 次";
             document.getElementById('blinkRate').innerText = "重置中...";
-            document.getElementById('diagnosisResult').innerText = "未激活诊断";
+            document.getElementById('diagnosisResult').innerText = "未开始";
             document.getElementById('diagnosisResult').className = "text-xs font-bold pt-1 text-slate-400";
         }
 
@@ -442,21 +454,20 @@
                 if (cleanStr.length > 0) {
                     const val = parseInt(cleanStr);
                     if (!isNaN(val) && val >= 0 && val <= 65535) {
-                        // 1. 送入双保险边缘防抖状态机
                         processRealtimeSignal(val, now);
                         
-                        // 2. 实时将当前这一秒的基础状态推入 Map 中（以防定时器同步时差出现漏记）
-                        if (!secondLogMap.has(formattedTimeBySecond)) {
-                            secondLogMap.set(formattedTimeBySecond, {
-                                count: binksTimestamps.length,
-                                fre: currentBpmValue
-                            });
-                        } else {
-                            // 如果同一秒有多个采样，实时更新最新累计的 blinking 总次数
-                            secondLogMap.get(formattedTimeBySecond).count = binksTimestamps.length;
+                        // 确保暂停状态下不往 CSV 缓存 Map 里面写这一秒的数据
+                        if (systemStartTime && (Date.now() - systemStartTime >= 3000)) {
+                            if (!secondLogMap.has(formattedTimeBySecond)) {
+                                secondLogMap.set(formattedTimeBySecond, {
+                                    count: binksTimestamps.length,
+                                    fre: currentBpmValue
+                                });
+                            } else {
+                                secondLogMap.get(formattedTimeBySecond).count = binksTimestamps.length;
+                            }
                         }
 
-                        // 3. 缓入显示级高速波形环形流
                         dataBuffer.push({ val: val, time: now, tsText: formattedTimeWithMs });
                         if (dataBuffer.length > MAX_HISTORY_POINTS) {
                             dataBuffer.shift();
@@ -476,7 +487,7 @@
 
         async function connectBluetooth() {
             if (!navigator.bluetooth) {
-                alert("当前环境或浏览器不支持 Web Bluetooth API，请确保部署在 HTTPS 环境下并使用支持的浏览器（如 Chrome）。");
+                alert("当前环境或浏览器不支持 Web Bluetooth API。");
                 return;
             }
             try {
@@ -515,21 +526,16 @@
             document.getElementById('pauseOverlay').classList.toggle('hidden', !isPaused);
         }
 
-        // === 修改：按每秒归纳汇总导出，并解决 Excel 中文表头乱码问题 ===
         function exportCSV() {
-            if (secondLogMap.size === 0) return alert("当前暂无可以归纳生成的秒级历史数据快照。");
+            if (secondLogMap.size === 0) return alert("当前暂无数据。");
             
-            // 解决乱码核心：增加 \uFEFF 字符，明确告诉 Excel 这是 UTF-8 编码
             let csvContent = "\uFEFFtime,count,fre\n";
-            
-            // 升序遍历 Map，将每一秒钟的汇总合并到 CSV 字符串中
             const sortedSeconds = Array.from(secondLogMap.keys()).sort();
             sortedSeconds.forEach(secKey => {
                 const logItem = secondLogMap.get(secKey);
                 csvContent += `${secKey},${logItem.count},${logItem.fre}\n`;
             });
             
-            // 使用 Blob 对象设置明确的媒体和编码，确保在各类表格软件中完美对齐、拒绝乱码
             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
             const link = document.createElement("a");
@@ -549,11 +555,11 @@
             if (status === 'ble') {
                 dot.classList.add('status-ble'); text.innerText = 'BLE 连接在线'; text.className="text-blue-400 font-bold";
                 btn.className = "bg-red-600 active:bg-red-800 hover:bg-red-700 text-white px-4 py-2 rounded text-xs md:text-sm font-bold transition";
-                document.getElementById('txtBle').innerText = "切断物理连接";
+                document.getElementById('txtBle').innerText = "切断连接";
             } else {
                 dot.classList.add('status-disconnected'); text.innerText = '设备离线'; text.className="text-slate-400";
                 btn.className = "bg-blue-600 active:bg-blue-800 hover:bg-blue-700 text-white px-4 py-2 rounded text-xs md:text-sm font-bold transition";
-                document.getElementById('txtBle').innerText = "连接蓝牙外设";
+                document.getElementById('txtBle').innerText = "连接蓝牙";
             }
         }
         
