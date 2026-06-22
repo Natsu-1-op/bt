@@ -62,7 +62,7 @@
 
     <header class="flex flex-wrap justify-between items-center mb-3 md:mb-4 gap-2 bg-slate-800/40 p-3 rounded-lg border border-slate-700/50">
         <div class="flex items-center space-x-4">
-            <h1 class="text-lg md:text-2xl font-bold neon-text text-emerald-400 truncate">眨眼检测上位机</h1>
+            <h1 class="text-lg md:text-2xl font-bold neon-text text-emerald-400 truncate">我测</h1>
             <div id="connectionStatus" class="flex items-center text-xs md:text-sm bg-slate-900/60 px-2 py-1 rounded">
                 <span class="status-dot status-disconnected" id="statusDot"></span>
                 <span id="statusText" class="text-slate-400">设备离线</span>
@@ -93,14 +93,14 @@
         <canvas id="oscilloscope"></canvas>
         
         <div class="absolute top-2 right-2 text-right bg-black/70 p-2 rounded backdrop-blur-sm border border-slate-700 pointer-events-none z-10 font-mono">
-            <div class="text-[10px] text-slate-400">当前电压 / 采样值</div>
+            <div class="text-[10px] text-slate-400">当前采样值</div>
             <div class="text-lg md:text-xl font-bold text-emerald-400" id="valVoltage">0.00 V</div>
             <div class="text-[10px] text-slate-500">ADC: <span id="valAdc">0</span></div>
         </div>
 
         <div id="pauseOverlay" class="hidden absolute inset-0 bg-black/40 backdrop-blur-[1px] flex items-center justify-center pointer-events-none z-20">
             <div class="bg-slate-900/90 px-6 py-3 rounded-lg border border-emerald-500/50 text-emerald-400 font-bold tracking-widest text-sm md:text-base shadow-2xl">
-                || 核心采样流已挂起 (暂停状态)
+                || 已暂停
             </div>
         </div>
     </div>
@@ -122,7 +122,6 @@
                     <input type="number" id="cfgDryThreshold" value="25" step="1" min="1" max="100" class="w-16 bg-slate-900 border border-slate-600 rounded px-1.5 py-0.5 text-xs font-bold font-mono text-red-400 text-center focus:border-red-500 outline-none" onchange="updateSettings()">
                 </div>
             </div>
-            <div class="text-[10px] text-slate-500">提示：数据将按秒整理</div>
         </div>
 
         <div class="bg-slate-800/40 p-3 rounded-lg border border-slate-700 flex items-center justify-between gap-4">
@@ -230,7 +229,6 @@
                 systemStartTime = now;
             }
 
-            // 【新逻辑】如果当前还处在前 3 秒的倒计时准备期内，彻底锁死并跳出状态机，不计任何数据
             if (now - systemStartTime < 3000) {
                 return;
             }
