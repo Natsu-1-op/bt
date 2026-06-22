@@ -62,7 +62,7 @@
 
     <header class="flex flex-wrap justify-between items-center mb-3 md:mb-4 gap-2 bg-slate-800/40 p-3 rounded-lg border border-slate-700/50">
         <div class="flex items-center space-x-4">
-            <h1 class="text-lg md:text-2xl font-bold neon-text text-emerald-400 truncate">我测</h1>
+            <h1 class="text-lg md:text-2xl font-bold neon-text text-emerald-400 truncate">眨眼检测上位机</h1>
             <div id="connectionStatus" class="flex items-center text-xs md:text-sm bg-slate-900/60 px-2 py-1 rounded">
                 <span class="status-dot status-disconnected" id="statusDot"></span>
                 <span id="statusText" class="text-slate-400">设备离线</span>
@@ -230,7 +230,7 @@
                 systemStartTime = now;
             }
 
-            // 新增限制：最开始的 3 秒内，属于绝对锁死静置期，完全不计眨眼总数
+            // 【新逻辑】如果当前还处在前 3 秒的倒计时准备期内，彻底锁死并跳出状态机，不计任何数据
             if (now - systemStartTime < 3000) {
                 return;
             }
@@ -274,7 +274,7 @@
             const blinkRateUI = document.getElementById('blinkRate');
             const diagnosisUI = document.getElementById('diagnosisResult');
 
-            // 1. 最开头的 3 秒内，精确显示倒计时提示
+            // 1. 最开始的 3 秒内，精确显示倒计时提示，并将诊断提示同步对齐
             if (elapsedSeconds < 3) {
                 const countdown = Math.ceil(3 - elapsedSeconds);
                 blinkRateUI.innerText = `即将开始计数(${countdown}s)`;
@@ -316,18 +316,22 @@
         }
 
         setInterval(() => {
-            // 如果处于冷冻/暂停状态，彻底挂起数据记录和频率推算
+            // 如果处于冷冻/暂停状态，或者尚未启动底层系统，彻底挂起所有周期性计时与归档行为
             if (isPaused || !isConnected || !systemStartTime) {
                 return; 
             }
 
+            const nowTs = Date.now();
             evalBlinkFrequency();
             
-            const secKey = formatSystemTimeBySecond(new Date());
-            secondLogMap.set(secKey, {
-                count: binksTimestamps.length,
-                fre: currentBpmValue
-            });
+            // 【新逻辑】只有当前时间真正越过了前 3 秒的安全静置期，后台计时记录器才开始向 CSV Map 写入行记录
+            if (nowTs - systemStartTime >= 3000) {
+                const secKey = formatSystemTimeBySecond(new Date());
+                secondLogMap.set(secKey, {
+                    count: binksTimestamps.length,
+                    fre: currentBpmValue
+                });
+            }
         }, 1000);
 
         function resetMetrics() {
@@ -345,15 +349,15 @@
 
         function draw() {
             requestAnimationFrame(draw);
-            if (dataBuffer.length === 0) {
-                ctx.fillStyle = CANVAS_BG;
-                ctx.fillRect(0, 0, canvas.logicalWidth, canvas.logicalHeight);
-                drawGrid(canvas.logicalWidth, canvas.logicalHeight, []);
-                return;
-            }
-
             const width = canvas.logicalWidth;
             const height = canvas.logicalHeight;
+
+            if (dataBuffer.length === 0) {
+                ctx.fillStyle = CANVAS_BG;
+                ctx.fillRect(0, 0, width, height);
+                drawGrid(width, height, []);
+                return;
+            }
 
             ctx.fillStyle = CANVAS_BG;
             ctx.fillRect(0, 0, width, height);
@@ -433,6 +437,11 @@
 
                     ctx.fillText(viewData[dataIdx].tsText, x - 20, h - 6);
                 }
+            } else {
+                // 【已优化】移动端自适应小字号，避免在移动端屏幕下字体过大产生挤压模糊
+                ctx.fillStyle = "#334155";
+                ctx.font = window.innerWidth < 768 ? "12px JetBrains Mono" : "14px JetBrains Mono";
+                ctx.fillText("等待数据...", w / 2 - 36, h / 2);
             }
         }
 
@@ -456,7 +465,7 @@
                     if (!isNaN(val) && val >= 0 && val <= 65535) {
                         processRealtimeSignal(val, now);
                         
-                        // 确保暂停状态下不往 CSV 缓存 Map 里面写这一秒的数据
+                        // 【新逻辑】只在前 3 秒静置期结束之后，才允许流式数据写盘，保证 CSV 表头下第一行即为有效起算秒
                         if (systemStartTime && (Date.now() - systemStartTime >= 3000)) {
                             if (!secondLogMap.has(formattedTimeBySecond)) {
                                 secondLogMap.set(formattedTimeBySecond, {
