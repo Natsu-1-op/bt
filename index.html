@@ -1,575 +1,276 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>眨眼检测与干眼症</title>
+    <title>我测</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
-        
-        body {
-            background-color: #0f172a;
-            color: #e2e8f0;
-            font-family: 'JetBrains Mono', monospace;
-            overflow-y: auto; 
-            -webkit-tap-highlight-color: transparent;
-        }
-
-        @media (min-width: 768px) {
-            body { overflow: hidden; }
-        }
-
-        .canvas-container {
-            position: relative;
-            width: 100%;
-            height: 45vh; 
-            background: #000;
-            border: 1px solid #334155;
-            border-radius: 8px;
-            box-shadow: 0 0 20px rgba(16, 185, 129, 0.1);
-            flex-shrink: 0;
-        }
-
-        @media (min-width: 768px) {
-            .canvas-container { height: 60vh; }
-        }
-
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght=400;700&display=swap');
+        body { background-color: #0f172a; color: #e2e8f0; font-family: 'JetBrains Mono', monospace; overflow-y: auto; -webkit-tap-highlight-color: transparent; }
+        @media (min-width: 768px) { body { overflow: hidden; } }
+        .canvas-container { position: relative; width: 100%; height: 45vh; background: #000; border: 1px solid #334155; border-radius: 8px; box-shadow: 0 0 20px rgba(16, 185, 129, 0.1); flex-shrink: 0; }
+        @media (min-width: 768px) { .canvas-container { height: 56vh; } }
         canvas { display: block; width: 100%; height: 100%; }
         .neon-text { text-shadow: 0 0 5px rgba(52, 211, 153, 0.5); }
-
-        .status-dot {
-            height: 8px; width: 8px; border-radius: 50%; display: inline-block; margin-right: 6px;
-        }
+        .status-dot { height: 8px; width: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
         .status-ble { background-color: #3b82f6; box-shadow: 0 0 8px #3b82f6; }
         .status-disconnected { background-color: #ef4444; box-shadow: 0 0 8px #ef4444; }
-
-        input[type="number"]::-webkit-inner-spin-button,
-        input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-        
         input[type=range] { -webkit-appearance: none; background: transparent; }
-        input[type=range]::-webkit-slider-thumb {
-            -webkit-appearance: none; height: 18px; width: 18px; border-radius: 50%;
-            background: #10b981; cursor: pointer; margin-top: -7px; 
-            box-shadow: 0 0 2px rgba(0,0,0,0.5);
-        }
-        input[type=range]::-webkit-slider-runnable-track {
-            width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px;
-        }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 18px; width: 18px; border-radius: 50%; background: #10b981; cursor: pointer; margin-top: -7px; }
+        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px; }
     </style>
 </head>
 <body class="min-h-screen md:h-screen flex flex-col p-2 md:p-4">
 
     <header class="flex flex-wrap justify-between items-center mb-3 md:mb-4 gap-2 bg-slate-800/40 p-3 rounded-lg border border-slate-700/50">
-        <div class="flex items-center space-x-4">
+        <div class="flex items-center space-x-3">
             <h1 class="text-lg md:text-2xl font-bold neon-text text-emerald-400 truncate">我测</h1>
             <div id="connectionStatus" class="flex items-center text-xs md:text-sm bg-slate-900/60 px-2 py-1 rounded">
                 <span class="status-dot status-disconnected" id="statusDot"></span>
-                <span id="statusText" class="text-slate-400">设备离线</span>
+                <span id="statusText" class="text-slate-400">DISCONNECTED</span>
             </div>
         </div>
         
-        <div class="flex items-center space-x-3 md:space-x-6">
-            <div class="text-center bg-slate-900/80 px-3 py-1 rounded border border-slate-700">
-                <div class="text-[10px] text-slate-500">有效眨眼计数</div>
-                <div class="text-xl md:text-2xl font-bold text-emerald-400 font-mono" id="blinkCount">0 次</div>
+        <div class="flex items-center space-x-2 md:space-x-4">
+            <div class="text-center bg-slate-900/80 px-2.5 py-1 rounded border border-slate-700">
+                <div class="text-[10px] text-slate-500">COUNT</div>
+                <div class="text-lg md:text-xl font-bold text-emerald-400 font-mono" id="blinkCount">0 TIMES</div>
             </div>
-            <div class="text-center bg-slate-900/80 px-3 py-1 rounded border border-slate-700">
-                <div class="text-[10px] text-slate-500">眨眼频率 (BPM)</div>
-                <div class="text-xl md:text-2xl font-bold text-blue-400 font-mono" id="blinkRate">等待数据...</div>
+            <div class="text-center bg-slate-900/80 px-2.5 py-1 rounded border border-slate-700 min-w-[100px]">
+                <div class="text-[10px] text-slate-500">FREQ</div>
+                <div class="text-sm md:text-lg font-bold text-blue-400 font-mono pt-0.5" id="blinkRate">WAITING</div>
             </div>
-            <div class="text-center bg-slate-900/80 px-3 py-1 rounded border border-slate-700 min-w-[120px]">
-                <div class="text-[10px] text-slate-500">评估结果</div>
-                <div class="text-xs md:text-sm font-bold pt-1 text-slate-400" id="diagnosisResult">未激活诊断</div>
+            <div class="text-center bg-slate-900/80 px-2 py-1 rounded border border-slate-700 min-w-[85px]">
+                <div class="text-[10px] text-slate-500">RESULT</div>
+                <div class="text-xs font-bold pt-0.5 text-slate-400" id="diagnosisResult">INACTIVE</div>
             </div>
             
-            <button onclick="toggleBluetooth()" id="btnBle" class="bg-blue-600 active:bg-blue-800 hover:bg-blue-700 text-white px-4 py-2 rounded text-xs md:text-sm font-bold transition flex items-center gap-1 shadow-lg shadow-blue-900/20">
-                <span id="txtBle">连接蓝牙</span>
+            <button onclick="toggleBluetooth()" id="btnBle" class="bg-blue-600 active:bg-blue-800 hover:bg-blue-700 text-white px-3 py-2 rounded text-xs md:text-sm font-bold transition shadow-lg">
+                <span id="txtBle">CONNECT</span>
             </button>
         </div>
     </header>
 
     <div class="canvas-container mb-3 md:mb-4">
         <canvas id="oscilloscope"></canvas>
-        
         <div class="absolute top-2 right-2 text-right bg-black/70 p-2 rounded backdrop-blur-sm border border-slate-700 pointer-events-none z-10 font-mono">
-            <div class="text-[10px] text-slate-400">当前采样值</div>
+            <div class="text-[10px] text-slate-400">AMPLIFY</div>
             <div class="text-lg md:text-xl font-bold text-emerald-400" id="valVoltage">0.00 V</div>
             <div class="text-[10px] text-slate-500">ADC: <span id="valAdc">0</span></div>
         </div>
-
         <div id="pauseOverlay" class="hidden absolute inset-0 bg-black/40 backdrop-blur-[1px] flex items-center justify-center pointer-events-none z-20">
-            <div class="bg-slate-900/90 px-6 py-3 rounded-lg border border-emerald-500/50 text-emerald-400 font-bold tracking-widest text-sm md:text-base shadow-2xl">
-                || 已暂停
-            </div>
+            <div class="bg-slate-900/90 px-6 py-3 rounded-lg border border-emerald-500/50 text-emerald-400 font-bold tracking-widest text-sm shadow-2xl">|| STOP</div>
         </div>
     </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4 md:h-24">
-        
-        <div class="bg-slate-800/40 p-3 rounded-lg border border-slate-700 flex flex-wrap items-center justify-between p-2 gap-2">
-            <div class="flex items-center space-x-2">
-                <div>
-                    <label class="text-[10px] text-slate-400 block mb-0.5">检测阈值 (V)</label>
-                    <input type="number" id="cfgThreshold" value="1.50" step="0.05" min="0" max="3.3" class="w-16 bg-slate-900 border border-slate-600 rounded px-1.5 py-0.5 text-xs font-bold font-mono text-emerald-400 text-center focus:border-emerald-500 outline-none" onchange="updateSettings()">
-                </div>
-                <div>
-                    <label class="text-[10px] text-slate-400 block mb-0.5">防抖死区 (ms)</label>
-                    <input type="number" id="cfgDebounce" value="500" step="50" min="100" max="2000" class="w-16 bg-slate-900 border border-slate-600 rounded px-1.5 py-0.5 text-xs font-bold font-mono text-yellow-400 text-center focus:border-yellow-500 outline-none" onchange="updateSettings()">
-                </div>
-                <div>
-                    <label class="text-[10px] text-slate-400 block mb-0.5">干眼阈值 (BPM)</label>
-                    <input type="number" id="cfgDryThreshold" value="25" step="1" min="1" max="100" class="w-16 bg-slate-900 border border-slate-600 rounded px-1.5 py-0.5 text-xs font-bold font-mono text-red-400 text-center focus:border-red-500 outline-none" onchange="updateSettings()">
-                </div>
-            </div>
-        </div>
-
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4 md:h-24">
         <div class="bg-slate-800/40 p-3 rounded-lg border border-slate-700 flex items-center justify-between gap-4">
             <div class="flex-1 flex items-center space-x-2">
-                <span class="text-xs text-slate-400 whitespace-nowrap">时间轴缩放</span>
-                <span class="text-[10px] text-slate-500">密</span>
+                <span class="text-xs text-slate-400 whitespace-nowrap">SCALE</span>
                 <input type="range" min="1" max="15" step="0.5" value="3" class="flex-1" id="scaleX" oninput="updateSettings()">
-                <span class="text-[10px] text-slate-500">疏</span>
             </div>
             <div class="flex items-center space-x-2 bg-slate-900/40 p-2 rounded border border-slate-700/60">
-                <label for="pauseToggle" class="text-xs text-slate-300 cursor-pointer select-none">数据流冻结</label>
+                <label for="pauseToggle" class="text-xs text-slate-300 cursor-pointer select-none">FREEZE</label>
                 <input type="checkbox" id="pauseToggle" class="w-4 h-4 accent-emerald-500 cursor-pointer" onchange="togglePauseMode()"/>
             </div>
         </div>
-
+        
         <div class="bg-slate-800/40 p-3 rounded-lg border border-slate-700 flex items-center justify-around gap-2">
-            <button onclick="exportCSV()" class="flex-1 bg-gradient-to-r from-blue-900/60 to-indigo-900/60 active:from-blue-800 active:to-indigo-800 text-blue-200 font-bold text-xs py-3 rounded-lg border border-blue-700 shadow-md transition-all">
-                导出历史数据 (CSV)
-            </button>
-            <button onclick="resetMetrics()" class="bg-slate-700 hover:bg-slate-600 active:bg-slate-800 text-slate-300 text-xs px-3 py-3 rounded-lg border border-slate-600">
-                重置计数
+            <button onclick="exportToCSV()" class="w-full bg-gradient-to-r from-emerald-600 to-teal-600 active:from-emerald-700 text-white font-bold text-sm py-4 rounded-lg border border-emerald-700 shadow-lg hover:from-emerald-500 hover:to-teal-500 transition-all duration-200">
+                EXPORT CSV
             </button>
         </div>
     </div>
 
     <script>
-        let globalConfig = {
-            adcMax: 4095,
-            sysVoltage: 3.3,
-            scaleX: 3,
-            voltageThreshold: 1.5,  
-            debounceDelay: 500,        
-            dryEyeBpmThreshold: 25  
-        };
-
-        const CANVAS_BG = '#000000';
-        const GRID_COLOR = '#1e293b';
-        const LINE_COLOR = '#10b981';
-        const THRESHOLD_LINE_COLOR = '#ef4444'; 
-        const MAX_HISTORY_POINTS = 3000;
-
-        let dataBuffer = [];      
-        let incomingBuffer = "";
-        let isConnected = false;
-        let isPaused = false;
+        let globalConfig = { adcMax: 4095, sysVoltage: 3.3, scaleX: 3 };
+        const CANVAS_BG = '#000000', GRID_COLOR = '#1e293b', LINE_COLOR = '#10b981', MAX_HISTORY_POINTS = 36000; 
+        let dataBuffer = [], incomingBuffer = "", isConnected = false, isPaused = false;
+        let bleDevice = null, bleCharacteristic = null; const textDecoder = new TextDecoder();
         
-        let lastTriggerTime = 0;              
-        let isWaitingForSignalToDrop = false; 
-        let binksTimestamps = [];     
-        let systemStartTime = null;   
-        let currentBpmValue = 0;      
+        let lastReceivedBlinkCount = 0;
+        let lastReceivedStatusId = 0;
 
-        let secondLogMap = new Map(); 
-
-        let bleDevice = null;
-        let bleCharacteristic = null;
-        const textDecoder = new TextDecoder();
-
-        const canvas = document.getElementById('oscilloscope');
-        const ctx = canvas.getContext('2d');
-
+        const canvas = document.getElementById('oscilloscope'), ctx = canvas.getContext('2d');
         function resizeCanvas() {
-            const dpr = window.devicePixelRatio || 1;
-            const rect = canvas.parentElement.getBoundingClientRect();
-            canvas.width = rect.width * dpr;
-            canvas.height = rect.height * dpr;
-            ctx.scale(dpr, dpr);
-            canvas.logicalWidth = rect.width;
-            canvas.logicalHeight = rect.height;
+            const dpr = window.devicePixelRatio || 1, rect = canvas.parentElement.getBoundingClientRect();
+            canvas.width = rect.width * dpr; canvas.height = rect.height * dpr; ctx.scale(dpr, dpr);
+            canvas.logicalWidth = rect.width; canvas.logicalHeight = rect.height;
         }
-        window.addEventListener('resize', resizeCanvas);
-        setTimeout(resizeCanvas, 100);
-        updateSettings();
+        window.addEventListener('resize', resizeCanvas); setTimeout(resizeCanvas, 100);
 
-        function updateSettings() {
-            globalConfig.scaleX = parseFloat(document.getElementById('scaleX').value) || 3;
-            globalConfig.voltageThreshold = parseFloat(document.getElementById('cfgThreshold').value) || 1.5;
-            globalConfig.debounceDelay = parseFloat(document.getElementById('cfgDebounce').value) || 500;
-            globalConfig.dryEyeBpmThreshold = parseFloat(document.getElementById('cfgDryThreshold').value) || 25;
+        function updateSettings() { globalConfig.scaleX = parseFloat(document.getElementById('scaleX').value) || 3; }
+        
+        function formatDateToBeijingStr(dateObj) {
+            const hrs = String(dateObj.getHours()).padStart(2, '0');
+            const mins = String(dateObj.getMinutes()).padStart(2, '0');
+            const secs = String(dateObj.getSeconds()).padStart(2, '0');
+            const ms = String(dateObj.getMilliseconds()).padStart(3, '0');
+            return `${hrs}:${mins}:${secs}.${ms}`;
         }
 
-        function adcToPhys(adcVal) {
-            return (adcVal / globalConfig.adcMax) * globalConfig.sysVoltage;
+        function formatTimeShort(dateObj) {
+            const hrs = String(dateObj.getHours()).padStart(2, '0');
+            const mins = String(dateObj.getMinutes()).padStart(2, '0');
+            const secs = String(dateObj.getSeconds()).padStart(2, '0');
+            return `${hrs}:${mins}:${secs}`;
         }
 
-        function formatSystemTimeWithMs(dateObj) {
-            const pad = (n) => String(n).padStart(2, '0');
-            const h = pad(dateObj.getHours());
-            const m = pad(dateObj.getMinutes());
-            const s = pad(dateObj.getSeconds());
-            const ms = String(dateObj.getMilliseconds()).padStart(3, '0').substring(0, 1);
-            return `${h}:${m}:${s}.${ms}`;
-        }
-
-        function formatSystemTimeBySecond(dateObj) {
-            const pad = (n) => String(n).padStart(2, '0');
-            return `${pad(dateObj.getHours())}:${pad(dateObj.getMinutes())}:${pad(dateObj.getSeconds())}`;
-        }
-
-        function processRealtimeSignal(adcRawVal, timeObject) {
-            const currentVoltage = adcToPhys(adcRawVal);
-            const now = timeObject.getTime();
-            
-            if (!systemStartTime) {
-                systemStartTime = now;
-            }
-
-            if (now - systemStartTime < 3000) {
-                return;
-            }
-
-            if (now - lastTriggerTime < globalConfig.debounceDelay) {
-                if (currentVoltage >= globalConfig.voltageThreshold) {
-                    isWaitingForSignalToDrop = true;
-                }
-                return; 
-            }
-
-            if (isWaitingForSignalToDrop) {
-                if (currentVoltage < globalConfig.voltageThreshold) {
-                    isWaitingForSignalToDrop = false; 
-                }
-                return; 
-            }
-
-            if (currentVoltage >= globalConfig.voltageThreshold) {
-                lastTriggerTime = now;           
-                isWaitingForSignalToDrop = true; 
-                registerValidBlink(now);
-            }
-        }
-
-        function registerValidBlink(timestamp) {
-            binksTimestamps.push(timestamp);
-            document.getElementById('blinkCount').innerText = binksTimestamps.length + " 次";
-            
-            const blinkCountUI = document.getElementById('blinkCount');
-            blinkCountUI.classList.add('scale-110', 'text-yellow-400');
-            setTimeout(() => blinkCountUI.classList.remove('scale-110', 'text-yellow-400'), 150);
-
-            evalBlinkFrequency();
-        }
-
-        function evalBlinkFrequency() {
-            if (!systemStartTime) return;
-            
-            const elapsedSeconds = (Date.now() - systemStartTime) / 1000;
-            const blinkRateUI = document.getElementById('blinkRate');
-            const diagnosisUI = document.getElementById('diagnosisResult');
-
-            // 1. 最开始的 3 秒内，精确显示倒计时提示，并将诊断提示同步对齐
-            if (elapsedSeconds < 3) {
-                const countdown = Math.ceil(3 - elapsedSeconds);
-                blinkRateUI.innerText = `即将开始计数(${countdown}s)`;
-                blinkRateUI.className = "text-xs text-yellow-500 font-mono";
-                diagnosisUI.innerText = "等待窗口对齐";
-                diagnosisUI.className = "text-xs font-bold pt-1 text-slate-500";
-                currentBpmValue = 0;
-                return;
-            }
-
-            // 2. 3 秒到 40 秒之间，显示长周期数据积累提示
-            if (elapsedSeconds < 40) {
-                const remaining = Math.ceil(40 - elapsedSeconds);
-                blinkRateUI.innerText = `数据积累中(${remaining}s)`;
-                blinkRateUI.className = "text-xs text-slate-500 font-mono";
-                diagnosisUI.innerText = "等待窗口对齐";
-                diagnosisUI.className = "text-xs font-bold pt-1 text-slate-500";
-                currentBpmValue = 0; 
-                return;
-            }
-
-            // 3. 40 秒满，触发滑动时间窗口频率计算
-            const cutoffTime = Date.now() - 40000;
-            const validBlinksInWindow = binksTimestamps.filter(ts => ts >= cutoffTime).length;
-            
-            const bpm = Math.round((validBlinksInWindow / 40) * 60);
-            currentBpmValue = bpm; 
-            
-            blinkRateUI.innerText = `${bpm} BPM`;
-            blinkRateUI.className = "text-xl md:text-2xl font-bold text-blue-400 font-mono";
-
-            if (bpm > globalConfig.dryEyeBpmThreshold) {
-                diagnosisUI.innerText = " 疑似干眼症症状";
-                diagnosisUI.className = "text-xs font-bold pt-1 text-red-500";
-            } else {
-                diagnosisUI.innerText = "指标正常";
-                diagnosisUI.className = "text-xs font-bold pt-1 text-emerald-400";
-            }
-        }
-
-        setInterval(() => {
-            // 如果处于冷冻/暂停状态，或者尚未启动底层系统，彻底挂起所有周期性计时与归档行为
-            if (isPaused || !isConnected || !systemStartTime) {
-                return; 
-            }
-
-            const nowTs = Date.now();
-            evalBlinkFrequency();
-            
-            // 【新逻辑】只有当前时间真正越过了前 3 秒的安全静置期，后台计时记录器才开始向 CSV Map 写入行记录
-            if (nowTs - systemStartTime >= 3000) {
-                const secKey = formatSystemTimeBySecond(new Date());
-                secondLogMap.set(secKey, {
-                    count: binksTimestamps.length,
-                    fre: currentBpmValue
-                });
-            }
-        }, 1000);
-
-        function resetMetrics() {
-            binksTimestamps = [];
-            systemStartTime = Date.now();
-            lastTriggerTime = 0;
-            isWaitingForSignalToDrop = false;
-            currentBpmValue = 0;
-            secondLogMap.clear(); 
-            document.getElementById('blinkCount').innerText = "0 次";
-            document.getElementById('blinkRate').innerText = "重置中...";
-            document.getElementById('diagnosisResult').innerText = "未开始";
-            document.getElementById('diagnosisResult').className = "text-xs font-bold pt-1 text-slate-400";
-        }
-
-        function draw() {
-            requestAnimationFrame(draw);
-            const width = canvas.logicalWidth;
-            const height = canvas.logicalHeight;
-
+        function exportToCSV() {
             if (dataBuffer.length === 0) {
-                ctx.fillStyle = CANVAS_BG;
-                ctx.fillRect(0, 0, width, height);
-                drawGrid(width, height, []);
+                alert("NO DATA");
                 return;
             }
-
-            ctx.fillStyle = CANVAS_BG;
-            ctx.fillRect(0, 0, width, height);
-
-            const maxPointsToShow = Math.floor(width / (globalConfig.scaleX * 0.4));
-            const viewData = dataBuffer.slice(-maxPointsToShow);
-
-            drawGrid(width, height, viewData);
-
-            const thresholdY = height * (1 - (globalConfig.voltageThreshold / globalConfig.sysVoltage));
-            ctx.strokeStyle = THRESHOLD_LINE_COLOR;
-            ctx.lineWidth = 1;
-            ctx.setLineDash([6, 3]);
-            ctx.beginPath();
-            ctx.moveTo(0, thresholdY);
-            ctx.lineTo(width, thresholdY);
-            ctx.stroke();
-            ctx.setLineDash([]);
             
-            ctx.fillStyle = THRESHOLD_LINE_COLOR;
-            ctx.font = '10px sans-serif';
-            ctx.fillText(`检测阈值: ${globalConfig.voltageThreshold.toFixed(2)}V`, width - 90, thresholdY - 4);
-
-            ctx.beginPath();
-            ctx.strokeStyle = LINE_COLOR;
-            ctx.lineWidth = 2.5;
-
-            const step = width / (viewData.length - 1 || 1);
-
-            for (let i = 0; i < viewData.length; i++) {
-                const x = i * step;
-                const physVal = adcToPhys(viewData[i].val);
-                const normalizedY = physVal / globalConfig.sysVoltage;
-                const y = height * (1 - normalizedY);
-
-                if (i === 0) ctx.moveTo(x, y);
-                else ctx.lineTo(x, y);
-            }
-            ctx.stroke();
-        }
-
-        function drawGrid(w, h, viewData) {
-            for (let i = 0; i <= 4; i++) {
-                const ratio = i / 4;
-                const y = h * (1 - ratio);
-                const val = ratio * globalConfig.sysVoltage;
-
-                ctx.lineWidth = i === 0 ? 1.5 : 1;
-                ctx.strokeStyle = i === 0 ? '#475569' : GRID_COLOR;
-                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
-                
-                ctx.fillStyle = '#64748b';
-                ctx.font = '10px JetBrains Mono';
-                ctx.fillText(`${val.toFixed(1)}V`, 5, y - 4);
-            }
-
-            if (viewData.length > 1) {
-                ctx.strokeStyle = GRID_COLOR;
-                ctx.lineWidth = 1;
-                ctx.fillStyle = '#475569';
-                ctx.font = '9px JetBrains Mono';
-
-                const totalTicks = 5; 
-                const stepIdx = Math.floor(viewData.length / totalTicks);
-
-                for (let i = 1; i < totalTicks; i++) {
-                    const dataIdx = i * stepIdx;
-                    if (dataIdx >= viewData.length) break;
-                    
-                    const step = w / (viewData.length - 1);
-                    const x = dataIdx * step;
-
-                    ctx.beginPath();
-                    ctx.moveTo(x, 0);
-                    ctx.lineTo(x, h);
-                    ctx.stroke();
-
-                    ctx.fillText(viewData[dataIdx].tsText, x - 20, h - 6);
-                }
-            } else {
-                // 【已优化】移动端自适应小字号，避免在移动端屏幕下字体过大产生挤压模糊
-                ctx.fillStyle = "#334155";
-                ctx.font = window.innerWidth < 768 ? "12px JetBrains Mono" : "14px JetBrains Mono";
-                ctx.fillText("等待数据...", w / 2 - 36, h / 2);
-            }
+            let csvLines = ["time,voltage"];
+            let baseTimestamp = dataBuffer[0].rawTimestamp; 
+            
+            dataBuffer.forEach((item, index) => {
+                let interpolatedMs = baseTimestamp + (index * 10); 
+                let interpolatedDate = new Date(interpolatedMs);
+                let smoothTimeStr = formatDateToBeijingStr(interpolatedDate);
+                csvLines.push(`${smoothTimeStr},${item.voltage.toFixed(3)}`);
+            });
+            
+            const csvBlob = new Blob([csvLines.join("\n")], { type: "text/csv;charset=utf-8;" });
+            const blobUrl = URL.createObjectURL(csvBlob);
+            
+            const link = document.createElement("a");
+            link.setAttribute("href", blobUrl);
+            const fileTime = new Date().toISOString().slice(0,10);
+            link.setAttribute("download", `All_Blink_WaveData_${fileTime}.csv`);
+            document.body.appendChild(link);
+            
+            link.click();
+            document.body.removeChild(link);
+            setTimeout(() => URL.revokeObjectURL(blobUrl), 100);
         }
 
         function handleIncomingData(chunk) {
             if (isPaused) return;
-
             incomingBuffer += chunk;
-            if (incomingBuffer.length > 5000) { incomingBuffer = ""; return; }
+            if (incomingBuffer.length > 8000) { incomingBuffer = ""; return; }
+            let parts = incomingBuffer.split('\n'); incomingBuffer = parts.pop(); 
             
-            let parts = incomingBuffer.split('\n');
-            incomingBuffer = parts.pop(); 
-
-            const now = new Date();
-            const formattedTimeWithMs = formatSystemTimeWithMs(now);
-            const formattedTimeBySecond = formatSystemTimeBySecond(now);
-
             parts.forEach(part => {
-                const cleanStr = part.trim();
-                if (cleanStr.length > 0) {
-                    const val = parseInt(cleanStr);
-                    if (!isNaN(val) && val >= 0 && val <= 65535) {
-                        processRealtimeSignal(val, now);
-                        
-                        // 【新逻辑】只在前 3 秒静置期结束之后，才允许流式数据写盘，保证 CSV 表头下第一行即为有效起算秒
-                        if (systemStartTime && (Date.now() - systemStartTime >= 3000)) {
-                            if (!secondLogMap.has(formattedTimeBySecond)) {
-                                secondLogMap.set(formattedTimeBySecond, {
-                                    count: binksTimestamps.length,
-                                    fre: currentBpmValue
-                                });
-                            } else {
-                                secondLogMap.get(formattedTimeBySecond).count = binksTimestamps.length;
-                            }
-                        }
+                const tokens = part.trim().split(',');
+                
+                if (tokens.length === 5 && tokens[0] === "D") {
+                    const adcRawVal = parseInt(tokens[1]); 
+                    const blinkCount = parseInt(tokens[2]);
+                    const bpmValue = parseInt(tokens[3]);
+                    const statusId = parseInt(tokens[4]);
 
-                        dataBuffer.push({ val: val, time: now, tsText: formattedTimeWithMs });
-                        if (dataBuffer.length > MAX_HISTORY_POINTS) {
-                            dataBuffer.shift();
+                    if (!isNaN(adcRawVal)) {
+                        if (blinkCount < lastReceivedBlinkCount || (statusId === 0 && (lastReceivedStatusId === 1 || lastReceivedStatusId === 2))) {
+                            console.log("RESET");
+                            dataBuffer = []; 
+                        }
+                        
+                        lastReceivedBlinkCount = blinkCount;
+                        lastReceivedStatusId = statusId;
+
+                        const currentVoltage = (adcRawVal / globalConfig.adcMax) * globalConfig.sysVoltage;
+                        const nowObj = new Date();
+
+                        document.getElementById('valVoltage').innerText = currentVoltage.toFixed(2) + " V";
+                        document.getElementById('valAdc').innerText = adcRawVal;
+                        
+                        dataBuffer.push({ 
+                            val: adcRawVal, 
+                            rawTimestamp: nowObj.getTime(), 
+                            voltage: currentVoltage,
+                            statusId: statusId 
+                        });
+                        if (dataBuffer.length > MAX_HISTORY_POINTS) dataBuffer.shift();
+
+                        document.getElementById('blinkCount').innerText = blinkCount + " TIMES";
+                        
+                        const rateUI = document.getElementById('blinkRate'), diagUI = document.getElementById('diagnosisResult');
+                        if (statusId === 0) {
+                            rateUI.innerText = "ALIGNING..."; rateUI.className = "text-xs text-slate-400 font-mono";
+                            diagUI.innerText = "WAITING"; diagUI.className = "text-xs font-bold pt-0.5 text-slate-500";
+                        } else {
+                            rateUI.innerText = `${bpmValue} BPM`; rateUI.className = "text-lg font-bold text-blue-400 font-mono";
+                            if (statusId === 2) { 
+                                diagUI.innerText = "DRY EYE"; diagUI.className = "text-xs font-bold pt-0.5 text-red-500"; 
+                            } else { 
+                                diagUI.innerText = "NORMAL"; diagUI.className = "text-xs font-bold pt-0.5 text-emerald-400"; 
+                            }
                         }
                     }
                 }
             });
         }
 
-        async function toggleBluetooth() {
-            if (isConnected && bleDevice && bleDevice.gatt.connected) {
-                bleDevice.gatt.disconnect();
-            } else {
-                connectBluetooth();
+        function draw() {
+            requestAnimationFrame(draw); const w = canvas.logicalWidth, h = canvas.logicalHeight;
+            ctx.fillStyle = CANVAS_BG; ctx.fillRect(0, 0, w, h);
+            
+            const maxP = Math.floor(w / (globalConfig.scaleX * 0.15));
+            const viewData = dataBuffer.slice(-maxP);
+            
+            drawGridWithTime(w, h, viewData);
+            
+            if (viewData.length === 0) return;
+            
+            ctx.beginPath(); ctx.strokeStyle = LINE_COLOR; ctx.lineWidth = 2.5;
+            const step = w / (viewData.length - 1 || 1);
+            for (let i = 0; i < viewData.length; i++) {
+                const x = i * step, y = h * (1 - (viewData[i].val / globalConfig.adcMax)) * 0.9 + (h * 0.05);
+                if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+        }
+
+        function drawGridWithTime(w, h, viewData) {
+            ctx.lineWidth = 1;
+            for (let i = 1; i <= 3; i++) {
+                const y = h * (i / 4);
+                ctx.strokeStyle = GRID_COLOR; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+            }
+            
+            const gridDivisions = 4;
+            for (let i = 0; i <= gridDivisions; i++) {
+                const x = w * (i / gridDivisions);
+                ctx.strokeStyle = GRID_COLOR; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+                
+                if (viewData.length > 0) {
+                    let dataIdx = Math.floor((viewData.length - 1) * (i / gridDivisions));
+                    if (dataIdx >= 0 && dataIdx < viewData.length) {
+                        let pointDate = new Date(viewData[dataIdx].rawTimestamp);
+                        let timeLabel = formatTimeShort(pointDate);
+                        
+                        ctx.fillStyle = '#64748b'; ctx.font = '10px JetBrains Mono';
+                        if (i === 0) ctx.fillText(timeLabel, x + 4, h - 6);
+                        else if (i === gridDivisions) ctx.fillText(timeLabel, x - 54, h - 6);
+                        else ctx.fillText(timeLabel, x - 25, h - 6);
+                    }
+                }
             }
         }
 
+        async function toggleBluetooth() { if (isConnected && bleDevice?.gatt.connected) bleDevice.gatt.disconnect(); else connectBluetooth(); }
         async function connectBluetooth() {
-            if (!navigator.bluetooth) {
-                alert("当前环境或浏览器不支持 Web Bluetooth API。");
-                return;
-            }
+            if (!navigator.bluetooth) return alert("Web Bluetooth is not supported in this environment. Please use Chrome or Edge browser.");
             try {
-                bleDevice = await navigator.bluetooth.requestDevice({
-                    acceptAllDevices: true,
-                    optionalServices: [0xffe0]
-                });
-
-                bleDevice.addEventListener('gattserverdisconnected', () => {
-                    isConnected = false;
-                    updateStatusUI('disconnected');
-                    resetMetrics();
-                });
-
-                const server = await bleDevice.gatt.connect();
-                const service = await server.getPrimaryService(0xffe0);
+                bleDevice = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [0xffe0] });
+                bleDevice.addEventListener('gattserverdisconnected', () => { isConnected = false; updateStatusUI('disconnected'); });
+                const server = await bleDevice.gatt.connect(), service = await server.getPrimaryService(0xffe0);
                 bleCharacteristic = await service.getCharacteristic(0xffe2); 
                 await bleCharacteristic.startNotifications();
-                bleCharacteristic.addEventListener('characteristicvaluechanged', (e) => {
-                    const chunk = textDecoder.decode(e.target.value);
-                    handleIncomingData(chunk);
-                });
-
-                isConnected = true;
-                updateStatusUI('ble');
-                systemStartTime = Date.now(); 
-            } catch (error) {
-                console.error(error);
-                isConnected = false;
-                updateStatusUI('disconnected');
-            }
+                bleCharacteristic.addEventListener('characteristicvaluechanged', (e) => handleIncomingData(textDecoder.decode(e.target.value)));
+                isConnected = true; updateStatusUI('ble');
+                dataBuffer = []; 
+            } catch (err) { console.error(err); isConnected = false; }
         }
-
-        function togglePauseMode() {
-            isPaused = document.getElementById('pauseToggle').checked;
-            document.getElementById('pauseOverlay').classList.toggle('hidden', !isPaused);
-        }
-
-        function exportCSV() {
-            if (secondLogMap.size === 0) return alert("当前暂无数据。");
-            
-            let csvContent = "\uFEFFtime,count,fre\n";
-            const sortedSeconds = Array.from(secondLogMap.keys()).sort();
-            sortedSeconds.forEach(secKey => {
-                const logItem = secondLogMap.get(secKey);
-                csvContent += `${secKey},${logItem.count},${logItem.fre}\n`;
-            });
-            
-            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement("a");
-            link.href = url;
-            link.download = `blink_second_summary_${new Date().getTime()}.csv`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            URL.revokeObjectURL(url);
-        }
-
+        function togglePauseMode() { isPaused = document.getElementById('pauseToggle').checked; document.getElementById('pauseOverlay').classList.toggle('hidden', !isPaused); }
         function updateStatusUI(status) {
-            const dot = document.getElementById('statusDot');
-            const text = document.getElementById('statusText');
-            const btn = document.getElementById('btnBle');
-            dot.className = 'status-dot ';
-            if (status === 'ble') {
-                dot.classList.add('status-ble'); text.innerText = 'BLE 连接在线'; text.className="text-blue-400 font-bold";
-                btn.className = "bg-red-600 active:bg-red-800 hover:bg-red-700 text-white px-4 py-2 rounded text-xs md:text-sm font-bold transition";
-                document.getElementById('txtBle').innerText = "切断连接";
-            } else {
-                dot.classList.add('status-disconnected'); text.innerText = '设备离线'; text.className="text-slate-400";
-                btn.className = "bg-blue-600 active:bg-blue-800 hover:bg-blue-700 text-white px-4 py-2 rounded text-xs md:text-sm font-bold transition";
-                document.getElementById('txtBle').innerText = "连接蓝牙";
-            }
+            const dot = document.getElementById('statusDot'), text = document.getElementById('statusText'), btn = document.getElementById('btnBle');
+            if (status === 'ble') { dot.className = 'status-dot status-ble'; text.innerText = 'SYNCING'; btn.innerText = "DISCONNECT"; } 
+            else { dot.className = 'status-dot status-disconnected'; text.innerText = 'OFFLINE'; btn.innerText = "CONNECT"; }
         }
-        
         draw();
     </script>
 </body>
