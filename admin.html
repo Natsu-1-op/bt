@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Smart Blink Detection & Dry Eye Analytics</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+    
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #121212;
+            color: #e0e0e0;
+            margin: 0;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            box-sizing: border-box;
+            min-height: 100vh;
+        }
+        h1 { color: #00adb5; margin: 10px 0; font-size: 24px; text-align: center; }
+        
+        .container {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            justify-content: center;
+            max-width: 100%;
+            width: 100%;
+            align-items: center;
+        }
+        
+        /* Fixed Aspect Ratio Video Box to prevent distortion */
+        .video-box {
+            position: relative;
+            background: #1e1e1e;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 2px solid #333;
+            width: 100%;
+            max-width: 480px;
+            /* 4:3 Aspect Ratio Guarantee */
+            aspect-ratio: 4 / 3; 
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        #input_video {
+            display: none;
+        }
+
+        #output_canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            /* Object-fit ensures the content fits perfectly inside 4:3 without stretching */
+            object-fit: cover; 
+            transform: scaleX(-1); /* Mirror view */
+        }
+        
+        .dashboard {
+            background: #1e1e1e;
+            border-radius: 8px;
+            padding: 15px;
+            border: 2px solid #333;
+            width: 100%;
+            max-width: 480px;
+            box-sizing: border-box;
+        }
+        
+        .oled-screen {
+            background: #000;
+            color: #00ffcc;
+            font-family: 'Courier New', Courier, monospace;
+            border: 4px solid #444;
+            padding: 12px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            box-shadow: inset 0 0 10px rgba(0,255,204,0.3);
+        }
+        
+        .oled-line {
+            height: 24px;
+            font-size: 16px;
+            margin-bottom: 5px;
+            white-space: nowrap;
+            overflow: hidden;
+        }
+        
+        .button-group {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        
+        .row-buttons {
+            display: flex;
+            gap: 10px;
+        }
+        
+        button {
+            border: none;
+            padding: 12px 15px;
+            font-size: 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.2s, opacity 0.2s;
+            flex: 1;
+            -webkit-tap-highlight-color: transparent; /* Remove mobile flash click */
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .btn-start { background: #00adb5; color: white; }
+        .btn-start:hover:not(:disabled) { background: #008f95; }
+        
+        .btn-pause { background: #ffc107; color: #121212; }
+        .btn-pause:hover:not(:disabled) { background: #e0a800; }
+        
+        .btn-reset { background: #ff5722; color: white; }
+        .btn-reset:hover:not(:disabled) { background: #e0481d; }
+
+        .status-init { color: #aaa; }
+        .status-hold { color: #ffeb3b; }
+        .status-dry { color: #ff5722; }
+        .status-normal { color: #4caf50; }
+        
+        .placeholder-text {
+            color: #888;
+            font-style: italic;
+            text-align: center;
+            padding: 0 20px;
+            font-size: 14px;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Blink Tracking & Dry Eye</h1>
+
+    <div class="container">
+        <div class="video-box" id="video_container">
+            <span class="placeholder-text" id="placeholder">Click "Start System" to activate your camera.<br><small style="color:#666;">(HTTPS required on mobile)</small></span>
+            <video id="input_video" playsinline muted></video>
+            <canvas id="output_canvas"></canvas>
+        </div>
+
+        <div class="dashboard">
+            <div class="oled-screen">
+                <div class="oled-line" id="oled_line_1">Count: 0 Times</div>
+                <div class="oled-line" id="oled_line_2">Wait Win: 3s</div>
+                <div class="oled-line" id="oled_line_3">Result: INIT</div>
+                <div class="oled-line" id="oled_line_4" style="color: #666; font-size: 13px;">EAR: 0.00</div>
+            </div>
+            
+            <div class="button-group">
+                <button class="btn-start" id="start_btn" onclick="startDetectionClick()">Start System</button>
+                <div class="row-buttons">
+                    <button class="btn-pause" id="pause_btn" onclick="togglePauseClick()" disabled>Pause</button>
+                    <button class="btn-reset" id="reset_btn" onclick="resetMetricsClick()" disabled>Reset</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<script>
+    const videoElement = document.getElementById('input_video');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    
+    const startBtn = document.getElementById('start_btn');
+    const pauseBtn = document.getElementById('pause_btn');
+    const resetBtn = document.getElementById('reset_btn');
+    const placeholder = document.getElementById('placeholder');
+
+    // ==========================================
+    // System Algorithmic Metrics & Configurations
+    // ==========================================
+    const EAR_THRESHOLD = 0.15;       
+    const DEBOUNCE_DELAY = 500;       
+    const DRY_EYE_THRESHOLD = 25;     
+    const WINDOW_SPAN_MS = 35000;     
+
+    let totalBlinkCount = 0;
+    let lastTriggerTime = 0;
+    let isWaitingForSignalToDrop = 0; 
+
+    let blinkRingBuf = [];            
+    let systemStartTime = 0;
+    let currentBpmValue = 0;
+    let dryEyeStatusId = 0;           
+
+    let isDetecting = false;
+    let isPaused = false;
+    let pausedTimeBuffer = 0;         
+    let pauseStartTimestamp = 0;
+
+    function getCurrentMs() {
+        return performance.now();
+    }
+
+    function resetLocalMetrics(now) {
+        totalBlinkCount = 0;
+        currentBpmValue = 0;
+        lastTriggerTime = 0;
+        isWaitingForSignalToDrop = 0;
+        systemStartTime = now;
+        blinkRingBuf = [];
+        dryEyeStatusId = 0;
+        pausedTimeBuffer = 0;
+        console.log("System Metrics Synchronized & Reset.");
+    }
+
+    function registerValidBlink(now) {
+        blinkRingBuf.push(now);
+        totalBlinkCount++;
+    }
+
+    function updateBlinkWindow(now) {
+        const adjustedNow = now - pausedTimeBuffer;
+        const deadline = adjustedNow - WINDOW_SPAN_MS;
+        while (blinkRingBuf.length > 0 && blinkRingBuf[0] < deadline) {
+            blinkRingBuf.shift();
+        }
+    }
+
+    function processRealtimeSignal(currentEar, now) {
+        const adjustedNow = now - pausedTimeBuffer;
+        if (systemStartTime === 0) systemStartTime = adjustedNow;
+        if (adjustedNow - systemStartTime < 3000) return; 
+
+        if (isWaitingForSignalToDrop === 0) {
+            if (currentEar <= EAR_THRESHOLD) {
+                if (adjustedNow - lastTriggerTime >= DEBOUNCE_DELAY) {
+                    isWaitingForSignalToDrop = 1;
+                    lastTriggerTime = adjustedNow;
+                    registerValidBlink(adjustedNow);
+                }
+            }
+        } else {
+            if (currentEar > EAR_THRESHOLD) {
+                isWaitingForSignalToDrop = 0;
+            }
+        }
+    }
+
+    function executeCentral35sEvaluation(now) {
+        if (systemStartTime === 0) return;
+        const adjustedNow = now - pausedTimeBuffer;
+        const elapsedSec = (adjustedNow - systemStartTime) / 1000;
+        
+        if (elapsedSec < 35) {
+            dryEyeStatusId = 0;
+            return;
+        }
+
+        updateBlinkWindow(now);
+        const validCount = blinkRingBuf.length;
+        currentBpmValue = Math.round((validCount * 60) / 35);
+        
+        if (currentBpmValue > DRY_EYE_THRESHOLD) {
+            dryEyeStatusId = 2; 
+        } else {
+            dryEyeStatusId = 1; 
+        }
+    }
+
+    function refreshVirtualDisplay(currentEar, now) {
+        if (systemStartTime === 0) return;
+        
+        const adjustedNow = isPaused ? pauseStartTimestamp - pausedTimeBuffer : now - pausedTimeBuffer;
+        const elapsedSec = (adjustedNow - systemStartTime) / 1000;
+
+        const line1 = document.getElementById('oled_line_1');
+        const line2 = document.getElementById('oled_line_2');
+        const line3 = document.getElementById('oled_line_3');
+        const line4 = document.getElementById('oled_line_4');
+
+        if (isPaused) {
+            line4.innerText = `EAR: PAUSED`;
+            line3.innerHTML = `Result: <span class="status-hold">PAUSED</span>`;
+            return;
+        }
+
+        line4.innerText = `EAR: ${currentEar.toFixed(2)} ${currentEar <= EAR_THRESHOLD ? '[CLOSED]' : '[OPEN]'}`;
+
+        if (elapsedSec < 3) {
+            line1.innerText = "Count: 0 Times";
+            line2.innerText = `Wait Win: ${Math.ceil(3 - elapsedSec)}s`;
+            line3.innerHTML = `Result: <span class="status-init">INIT</span>`;
+        } 
+        else if (elapsedSec < 35) {
+            line1.innerText = `Count : ${totalBlinkCount} Times`;
+            line2.innerText = `WarmUp: ${Math.ceil(35 - elapsedSec)}s`;
+            line3.innerHTML = `Result: <span class="status-hold">HOLD</span>`;
+        } 
+        else {
+            line1.innerText = `Count : ${totalBlinkCount} Times`;
+            line2.innerText = `Rate  : ${currentBpmValue} BPM`;
+            if (dryEyeStatusId === 2) {
+                line3.innerHTML = `DryEye: <span class="status-dry">YES !</span>`;
+            } else {
+                line3.innerHTML = `DryEye: <span class="status-normal">NO</span>`;
+            }
+        }
+    }
+
+    function resetMetricsClick() {
+        resetLocalMetrics(getCurrentMs());
+        if(isPaused) pauseStartTimestamp = performance.now();
+    }
+
+    function togglePauseClick() {
+        if (!isDetecting) return;
+
+        if (!isPaused) {
+            isPaused = true;
+            pauseStartTimestamp = performance.now();
+            pauseBtn.innerText = "Resume";
+            pauseBtn.style.background = "#00adb5";
+            pauseBtn.style.color = "white";
+        } else {
+            const pauseDuration = performance.now() - pauseStartTimestamp;
+            pausedTimeBuffer += pauseDuration; 
+            isPaused = false;
+            pauseBtn.innerText = "Pause";
+            pauseBtn.style.background = "#ffc107";
+            pauseBtn.style.color = "#121212";
+        }
+    }
+
+    // ==========================================
+    // Computer Vision Engine & Scaling Fix
+    // ==========================================
+    function calculateEAR(p1, p2, p3, p4, p5, p6) {
+        const v1 = Math.hypot(p2.x - p6.x, p2.y - p6.y);
+        const v2 = Math.hypot(p3.x - p5.x, p3.y - p5.y);
+        const h = Math.hypot(p1.x - p4.x, p1.y - p4.y);
+        return (v1 + v2) / (2.0 * h);
+    }
+
+    function onResults(results) {
+        // Dynamic Resize: Match canvas internal drawing resolution to the real hardware video resolution
+        if (canvasElement.width !== results.image.width || canvasElement.height !== results.image.height) {
+            canvasElement.width = results.image.width;
+            canvasElement.height = results.image.height;
+        }
+
+        canvasCtx.save();
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+        if (isPaused) {
+            refreshVirtualDisplay(0, getCurrentMs());
+            canvasCtx.restore();
+            return;
+        }
+
+        if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+            const landmarks = results.multiFaceLandmarks[0];
+
+            const leftEAR = calculateEAR(
+                landmarks[33], landmarks[160], landmarks[158],
+                landmarks[133], landmarks[153], landmarks[144]
+            );
+
+            const rightEAR = calculateEAR(
+                landmarks[362], landmarks[385], landmarks[387],
+                landmarks[263], landmarks[373], landmarks[380]
+            );
+
+            const avgEAR = (leftEAR + rightEAR) / 2;
+
+            canvasCtx.fillStyle = '#00ff00';
+            [33, 160, 158, 133, 153, 144, 362, 385, 387, 263, 373, 380].forEach(idx => {
+                const pt = landmarks[idx];
+                canvasCtx.beginPath();
+                canvasCtx.arc(pt.x * canvasElement.width, pt.y * canvasElement.height, canvasElement.width * 0.005, 0, 2 * Math.PI);
+                canvasCtx.fill();
+            });
+
+            const now = getCurrentMs();
+            processRealtimeSignal(avgEAR, now);
+            executeCentral35sEvaluation(now);
+            refreshVirtualDisplay(avgEAR, now);
+        } else {
+            document.getElementById('oled_line_4').innerText = "EAR: N/A [NO FACE]";
+        }
+        canvasCtx.restore();
+    }
+
+    const faceMesh = new FaceMesh({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+    });
+
+    faceMesh.setOptions({
+        maxNumFaces: 1,
+        refineLandmarks: true,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+    });
+
+    faceMesh.onResults(onResults);
+
+    // ==========================================
+    // Unified Mobile-Optimized Camera Stream
+    // ==========================================
+    function initCameraStream() {
+        // Ask for standard ideal mobile constraints (automatic portrait/landscape handling)
+        const constraints = {
+            video: {
+                facingMode: "user", 
+                width: { ideal: 640 },
+                height: { ideal: 480 }
+            },
+            audio: false
+        };
+
+        navigator.mediaDevices.getUserMedia(constraints)
+            .then((stream) => {
+                videoElement.srcObject = stream;
+                videoElement.play();
+                
+                function renderLoop() {
+                    if (!videoElement.paused && !videoElement.ended) {
+                        faceMesh.send({ image: videoElement })
+                            .then(() => requestAnimationFrame(renderLoop))
+                            .catch(() => requestAnimationFrame(renderLoop));
+                    } else {
+                        requestAnimationFrame(renderLoop);
+                    }
+                }
+                
+                videoElement.onloadedmetadata = () => {
+                    resetLocalMetrics(getCurrentMs());
+                    placeholder.style.display = 'none';
+                    startBtn.innerText = "System Active";
+                    pauseBtn.disabled = false;
+                    resetBtn.disabled = false;
+                    requestAnimationFrame(renderLoop);
+                };
+            })
+            .catch((err) => {
+                console.error("Camera access failed:", err);
+                startBtn.innerText = "Retry Connection";
+                startBtn.disabled = false;
+                isDetecting = false;
+                placeholder.innerText = "Failed to access camera. Verify HTTPS environment or camera permissions.";
+                placeholder.style.color = '#ff5722';
+            });
+    }
+
+    function startDetectionClick() {
+        if (isDetecting) return;
+        isDetecting = true;
+        startBtn.innerText = "Loading Framework...";
+        startBtn.disabled = true;
+
+        initCameraStream();
+    }
+</script>
+</body>
+</html>
