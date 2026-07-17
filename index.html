@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, maximum-scale=1.0, user-scalable=no">
-    <title>我测</title>
+    <title>Whatsup</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght=400;700&display=swap');
         body { background-color: #0f172a; color: #e2e8f0; font-family: 'JetBrains Mono', monospace; overflow-y: auto; -webkit-tap-highlight-color: transparent; }
         @media (min-width: 768px) { body { overflow: hidden; } }
-        .canvas-container { position: relative; width: 100%; height: 45vh; background: #000; border: 1px solid #334155; border-radius: 8px; box-shadow: 0 0 20px rgba(16, 185, 129, 0.1); flex-shrink: 0; }
-        @media (min-width: 768px) { .canvas-container { height: 56vh; } }
+        .canvas-container { position: relative; width: 100%; height: 40vh; background: #000; border: 1px solid #334155; border-radius: 8px; box-shadow: 0 0 20px rgba(16, 185, 129, 0.1); flex-shrink: 0; }
+        @media (min-width: 768px) { .canvas-container { height: 50vh; } }
         canvas { display: block; width: 100%; height: 100%; }
         .neon-text { text-shadow: 0 0 5px rgba(52, 211, 153, 0.5); }
         .status-dot { height: 8px; width: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
@@ -23,37 +23,44 @@
 </head>
 <body class="min-h-screen md:h-screen flex flex-col p-2 md:p-4">
 
-    <header class="flex flex-wrap justify-between items-center mb-3 md:mb-4 gap-2 bg-slate-800/40 p-3 rounded-lg border border-slate-700/50">
-        <div class="flex items-center space-x-3">
-            <a href="admin.html" class="block">
-                <h1 class="text-lg md:text-2xl font-bold neon-text text-emerald-400 truncate hover:text-emerald-300 hover:underline cursor-pointer">我测</h1>
-            </a>
-            <div id="connectionStatus" class="flex items-center text-xs md:text-sm bg-slate-900/60 px-2 py-1 rounded">
-                <span class="status-dot status-disconnected" id="statusDot"></span>
-                <span id="statusText" class="text-slate-400">OFFLINE</span>
-            </div>
-        </div>
+    <!-- 顶部首部栏：whatsup 左对齐，连接控制区域右对齐 -->
+    <header class="flex justify-between items-center mb-3 bg-slate-800/40 p-3 rounded-lg border border-slate-700/50">
+        <!-- 1. 左侧标题 -->
+        <a href="admin.html" class="block">
+            <h1 class="text-xl md:text-2xl font-bold neon-text text-emerald-400 truncate hover:text-emerald-300 hover:underline cursor-pointer">Whatsup</h1>
+        </a>
         
-        <div class="flex items-center space-x-2 md:space-x-4">
-            <div class="text-center bg-slate-900/80 px-2.5 py-1 rounded border border-slate-700">
-                <div class="text-[10px] text-slate-500">COUNT</div>
-                <div class="text-lg md:text-xl font-bold text-emerald-400 font-mono" id="blinkCount">0 TIMES</div>
+        <!-- 2. 右侧连接控制区域（OFFLINE 紧贴在 CONNECT 左边） -->
+        <div class="flex items-center space-x-2">
+            <!-- 状态指示器 -->
+            <div id="connectionStatus" class="flex items-center text-xs bg-slate-900/60 px-2 py-1.5 rounded border border-slate-700/40">
+                <span class="status-dot status-disconnected" id="statusDot"></span>
+                <span id="statusText" class="text-slate-400 font-mono">OFFLINE</span>
             </div>
-            <div class="text-center bg-slate-900/80 px-2.5 py-1 rounded border border-slate-700 min-w-[100px]">
-                <div class="text-[10px] text-slate-500">FREQ</div>
-                <div class="text-sm md:text-lg font-bold text-blue-400 font-mono pt-0.5" id="blinkRate">WAITING</div>
-            </div>
-            <div class="text-center bg-slate-900/80 px-2 py-1 rounded border border-slate-700 min-w-[85px]">
-                <div class="text-[10px] text-slate-500">RESULT</div>
-                <div class="text-xs font-bold pt-0.5 text-slate-400" id="diagnosisResult">INACTIVE</div>
-            </div>
-            
-            <button onclick="toggleBluetooth()" id="btnBle" class="bg-blue-600 active:bg-blue-800 hover:bg-blue-700 text-white px-3 py-2 rounded text-xs md:text-sm font-bold transition shadow-lg">
+            <!-- 连接按钮 -->
+            <button onclick="toggleBluetooth()" id="btnBle" class="bg-blue-600 active:bg-blue-800 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-xs md:text-sm font-bold transition shadow-lg whitespace-nowrap">
                 <span id="txtBle">CONNECT</span>
             </button>
         </div>
     </header>
 
+    <!-- 3. 下方三个数据看板栏：等大小横向平分排布 -->
+    <section class="grid grid-cols-3 gap-2 mb-3">
+        <div class="text-center bg-slate-900/80 py-2 rounded border border-slate-700 w-full flex flex-col justify-center">
+            <div class="text-[10px] text-slate-500 uppercase">Count</div>
+            <div class="text-sm md:text-lg font-bold text-emerald-400 font-mono" id="blinkCount">0 TIMES</div>
+        </div>
+        <div class="text-center bg-slate-900/80 py-2 rounded border border-slate-700 w-full flex flex-col justify-center">
+            <div class="text-[10px] text-slate-500 uppercase">Freq</div>
+            <div class="text-sm md:text-lg font-bold text-blue-400 font-mono" id="blinkRate">WAITING</div>
+        </div>
+        <div class="text-center bg-slate-900/80 py-2 rounded border border-slate-700 w-full flex flex-col justify-center">
+            <div class="text-[10px] text-slate-500 uppercase">Result</div>
+            <div class="text-xs md:text-sm font-bold text-slate-400" id="diagnosisResult">INACTIVE</div>
+        </div>
+    </section>
+
+    <!-- 波形图容器 -->
     <div class="canvas-container mb-3 md:mb-4">
         <canvas id="oscilloscope"></canvas>
         <div class="absolute top-2 right-2 text-right bg-black/70 p-2 rounded backdrop-blur-sm border border-slate-700 pointer-events-none z-10 font-mono">
@@ -66,6 +73,7 @@
         </div>
     </div>
 
+    <!-- 底部控制器区域 -->
     <div class="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4 md:h-24">
         <div class="bg-slate-800/40 p-3 rounded-lg border border-slate-700 flex items-center justify-between gap-4">
             <div class="flex-1 flex items-center space-x-2">
@@ -192,13 +200,13 @@
                         const rateUI = document.getElementById('blinkRate'), diagUI = document.getElementById('diagnosisResult');
                         if (statusId === 0) {
                             rateUI.innerText = "ALIGNING..."; rateUI.className = "text-xs text-slate-400 font-mono";
-                            diagUI.innerText = "WAITING"; diagUI.className = "text-xs font-bold pt-0.5 text-slate-500";
+                            diagUI.innerText = "WAITING"; diagUI.className = "text-xs font-bold text-slate-500";
                         } else {
-                            rateUI.innerText = `${bpmValue} BPM`; rateUI.className = "text-lg font-bold text-blue-400 font-mono";
+                            rateUI.innerText = `${bpmValue} BPM`; rateUI.className = "text-sm md:text-lg font-bold text-blue-400 font-mono";
                             if (statusId === 2) { 
-                                diagUI.innerText = "DRY EYE"; diagUI.className = "text-xs font-bold pt-0.5 text-red-500"; 
+                                diagUI.innerText = "DRY EYE"; diagUI.className = "text-xs md:text-sm font-bold text-red-500"; 
                             } else { 
-                                diagUI.innerText = "NORMAL"; diagUI.className = "text-xs font-bold pt-0.5 text-emerald-400"; 
+                                diagUI.innerText = "NORMAL"; diagUI.className = "text-xs md:text-sm font-bold text-emerald-400"; 
                             }
                         }
                     }
@@ -230,7 +238,7 @@
             ctx.lineWidth = 1;
             for (let i = 1; i <= 3; i++) {
                 const y = h * (i / 4);
-                ctx.strokeStyle = GRID_COLOR; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+                ctx.strokeStyle = GRID_COLOR; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); stroke();
             }
             
             const gridDivisions = 4;
