@@ -95,12 +95,30 @@
 
     <script>
         let globalConfig = { adcMax: 4095, sysVoltage: 3.3, scaleX: 3 };
-        const CANVAS_BG = '#000000', GRID_COLOR = '#1e293b', LINE_COLOR = '#10b981', MAX_HISTORY_POINTS = 36000; 
+        const CANVAS_BG = '#000000', GRID_COLOR = '#1e293b', LINE_COLOR = '#10b981', MAX_HISTORY_POINTS = 36000;
+        const MEAN_FILTER_WINDOW_SIZE = 5;
         let dataBuffer = [], incomingBuffer = "", isConnected = false, isPaused = false;
         let bleDevice = null, bleCharacteristic = null; const textDecoder = new TextDecoder();
+        let meanFilterSamples = [], meanFilterSum = 0;
         
         let lastReceivedBlinkCount = 0;
         let lastReceivedStatusId = 0;
+
+        function resetMeanFilter() {
+            meanFilterSamples = [];
+            meanFilterSum = 0;
+        }
+
+        function applyMeanFilter(sample) {
+            meanFilterSamples.push(sample);
+            meanFilterSum += sample;
+
+            if (meanFilterSamples.length > MEAN_FILTER_WINDOW_SIZE) {
+                meanFilterSum -= meanFilterSamples.shift();
+            }
+
+            return meanFilterSum / meanFilterSamples.length;
+        }
 
         const canvas = document.getElementById('oscilloscope'), ctx = canvas.getContext('2d');
         function resizeCanvas() {
@@ -187,21 +205,23 @@
                     if (!isNaN(adcRawVal)) {
                         if (blinkCount < lastReceivedBlinkCount || (statusId === 0 && (lastReceivedStatusId === 1 || lastReceivedStatusId === 2))) {
                             console.log("RESET");
-                            dataBuffer = []; 
+                            dataBuffer = [];
+                            resetMeanFilter();
                         }
                         
                         lastReceivedBlinkCount = blinkCount;
                         lastReceivedStatusId = statusId;
 
-                        const currentVoltage = (adcRawVal / globalConfig.adcMax) * globalConfig.sysVoltage;
+                        const filteredAdcVal = applyMeanFilter(adcRawVal);
+                        const currentVoltage = (filteredAdcVal / globalConfig.adcMax) * globalConfig.sysVoltage;
                         const nowObj = new Date();
 
                         document.getElementById('valVoltage').innerText = currentVoltage.toFixed(2) + " V";
-                        document.getElementById('valAdc').innerText = adcRawVal;
-                        
-                        dataBuffer.push({ 
-                            val: adcRawVal, 
-                            rawTimestamp: nowObj.getTime(), 
+                        document.getElementById('valAdc').innerText = Math.round(filteredAdcVal);
+                        dataBuffer.push({
+                            val: filteredAdcVal,
+                            rawVal: adcRawVal,
+                            rawTimestamp: nowObj.getTime(),
                             voltage: currentVoltage,
                             statusId: statusId 
                         });
@@ -284,7 +304,8 @@
                 await bleCharacteristic.startNotifications();
                 bleCharacteristic.addEventListener('characteristicvaluechanged', (e) => handleIncomingData(textDecoder.decode(e.target.value)));
                 isConnected = true; updateStatusUI('ble');
-                dataBuffer = []; 
+                dataBuffer = [];
+                resetMeanFilter();
             } catch (err) { console.error(err); isConnected = false; }
         }
         function togglePauseMode() { isPaused = document.getElementById('pauseToggle').checked; document.getElementById('pauseOverlay').classList.toggle('hidden', !isPaused); }
