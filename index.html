@@ -1,320 +1,1409 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, maximum-scale=1.0, user-scalable=no">
-    <title>Whatsup</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght=400;700&display=swap');
-        body { background-color: #0f172a; color: #e2e8f0; font-family: 'JetBrains Mono', monospace; overflow-y: auto; -webkit-tap-highlight-color: transparent; }
-        @media (min-width: 768px) { body { overflow: hidden; } }
-        .canvas-container { position: relative; width: 100%; height: 40vh; background: #000; border: 1px solid #334155; border-radius: 8px; box-shadow: 0 0 20px rgba(16, 185, 129, 0.1); flex-shrink: 0; }
-        @media (min-width: 768px) { .canvas-container { height: 50vh; } }
-        canvas { display: block; width: 100%; height: 100%; }
-        .neon-text { text-shadow: 0 0 5px rgba(52, 211, 153, 0.5); }
-        .status-dot { height: 8px; width: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
-        .status-ble { background-color: #3b82f6; box-shadow: 0 0 8px #3b82f6; }
-        .status-disconnected { background-color: #ef4444; box-shadow: 0 0 8px #ef4444; }
-        input[type=range] { -webkit-appearance: none; background: transparent; }
-        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 18px; width: 18px; border-radius: 50%; background: #10b981; cursor: pointer; margin-top: -7px; }
-        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px; }
-    </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#07111f">
+<title>眨眼测试</title>
+<style>
+  :root{
+    color-scheme:dark;
+    --bg:#07111f; --card:#0e1b2d; --line:#1d3048; --text:#e5eefb; --muted:#8ea3bd;
+    --ok:#38d996; --warn:#f4bf4f; --bad:#ff6679; --blue:#6ca9ff; --violet:#b58cff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:15px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  main{max-width:960px;margin:0 auto;padding:12px 12px 40px}
+  h1{margin:0;font-size:19px;color:var(--ok);user-select:none;touch-action:manipulation}
+  h2{margin:0 0 10px;font-size:14px;color:var(--text);font-weight:700}
+  .sub{color:var(--muted);font-size:11.5px;margin-top:3px}
+  header{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;margin-bottom:10px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px;margin-bottom:10px}
+  button{border:1px solid #315274;background:#172b43;color:var(--text);border-radius:8px;
+         padding:10px 12px;font:inherit;font-size:13px;font-weight:700;touch-action:manipulation;cursor:pointer}
+  button:disabled{opacity:.38;cursor:not-allowed}
+  button.primary{background:#087c57;border-color:#21b77f}
+  button.warn{background:#7a5511;border-color:#c9962e}
+  button.danger{background:#6a2635;border-color:#c64b62}
+  button.ghost{background:#12203a}
+  .top{display:flex;align-items:center;gap:8px}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--bad);flex:0 0 auto}
+  .dot.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  #conn{color:var(--muted);font-size:12px;flex:1;min-width:0}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .metric{border:1px solid var(--line);background:#091525;border-radius:8px;padding:9px;min-width:0}
+  .metric label{display:block;color:var(--muted);font-size:11px;margin-bottom:4px}
+  .metric strong{display:block;font-size:17px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .good{color:var(--ok)} .warnc{color:var(--warn)} .badc{color:var(--bad)} .bluec{color:var(--blue)}
+  .scope{height:300px;padding:0;overflow:hidden;position:relative}
+  .scope canvas{width:100%;height:100%;display:block}
+  .legend{position:absolute;right:8px;top:8px;background:#07111fdd;border:1px solid var(--line);
+          border-radius:6px;padding:6px 8px;color:var(--muted);font-size:10.5px;line-height:1.6;pointer-events:none}
+  .controls{display:flex;gap:8px;flex-wrap:wrap}
+  .controls button{flex:1 1 118px}
+  .note{color:var(--muted);font-size:11.5px;line-height:1.6;margin:9px 0 0}
+  .note b{color:var(--text)}
+  .fields{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:9px}
+  .field{background:#091525;border:1px solid var(--line);border-radius:8px;padding:8px}
+  .field label{display:block;color:var(--muted);font-size:11px;margin-bottom:4px}
+  .field input,.field select{width:100%;background:#0e1b2d;border:1px solid #2a3f5c;color:var(--text);
+          border-radius:6px;padding:6px;font:inherit;font-size:13px}
+  #freqWrap{height:200px;position:relative;border:1px solid var(--line);border-radius:8px;background:#050b13;overflow:hidden}
+  #freqWrap canvas{width:100%;height:100%;display:block}
+  .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:9px;color:var(--muted);font-size:11.5px}
+  .summary div{background:#091525;border-radius:6px;padding:7px}
+  .summary b{color:var(--text);display:block;font-size:15px;margin-top:2px}
+  .tiny{color:var(--muted);font-size:11px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .hidden{display:none !important}
+  .field input[type="checkbox"]{width:auto;vertical-align:middle;margin:0 6px 0 0}
+  @media (max-width:620px){
+    .grid{grid-template-columns:repeat(2,1fr)}
+    .summary{grid-template-columns:repeat(2,1fr)}
+    .fields{grid-template-columns:1fr 1fr}
+    .scope{height:250px}
+  }
+</style>
 </head>
-<body class="min-h-screen md:h-screen flex flex-col p-2 md:p-4">
-
-    <!-- 顶部首部栏：whatsup 左对齐，连接控制区域右对齐 -->
-    <header class="flex justify-between items-center mb-3 bg-slate-800/40 p-3 rounded-lg border border-slate-700/50">
-        <!-- 1. 左侧标题 -->
-        <a href="admin.html" class="block">
-            <h1 class="text-xl md:text-2xl font-bold neon-text text-emerald-400 truncate hover:text-emerald-300 hover:underline cursor-pointer">Whatsup</h1>
-        </a>
-        
-        <!-- 2. 右侧连接控制区域（OFFLINE 紧贴在 CONNECT 左边） -->
-        <div class="flex items-center space-x-2">
-            <!-- 状态指示器 -->
-            <div id="connectionStatus" class="flex items-center text-xs bg-slate-900/60 px-2 py-1.5 rounded border border-slate-700/40">
-                <span class="status-dot status-disconnected" id="statusDot"></span>
-                <span id="statusText" class="text-slate-400 font-mono">OFFLINE</span>
-            </div>
-            <!-- 连接按钮 -->
-            <button onclick="toggleBluetooth()" id="btnBle" class="bg-blue-600 active:bg-blue-800 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-xs md:text-sm font-bold transition shadow-lg whitespace-nowrap">
-                <span id="txtBle">CONNECT</span>
-            </button>
-        </div>
-    </header>
-
-    <!-- 3. 下方三个数据看板栏：等大小横向平分排布 -->
-    <section class="grid grid-cols-3 gap-2 mb-3">
-        <div class="text-center bg-slate-900/80 py-2 rounded border border-slate-700 w-full flex flex-col justify-center">
-            <div class="text-[10px] text-slate-500 uppercase">Count</div>
-            <div class="text-sm md:text-lg font-bold text-emerald-400 font-mono" id="blinkCount">0 TIMES</div>
-        </div>
-        <div class="text-center bg-slate-900/80 py-2 rounded border border-slate-700 w-full flex flex-col justify-center">
-            <div class="text-[10px] text-slate-500 uppercase">Freq</div>
-            <div class="text-sm md:text-lg font-bold text-blue-400 font-mono" id="blinkRate">WAITING</div>
-        </div>
-        <div class="text-center bg-slate-900/80 py-2 rounded border border-slate-700 w-full flex flex-col justify-center">
-            <div class="text-[10px] text-slate-500 uppercase">Result</div>
-            <div class="text-xs md:text-sm font-bold text-slate-400" id="diagnosisResult">INACTIVE</div>
-        </div>
-    </section>
-
-    <!-- 波形图容器 -->
-    <div class="canvas-container mb-3 md:mb-4">
-        <canvas id="oscilloscope"></canvas>
-        <div class="absolute top-2 right-2 text-right bg-black/70 p-2 rounded backdrop-blur-sm border border-slate-700 pointer-events-none z-10 font-mono">
-            <div class="text-[10px] text-slate-400">AMPLIFY</div>
-            <div class="text-lg md:text-xl font-bold text-emerald-400" id="valVoltage">0.00 V</div>
-            <div class="text-[10px] text-slate-500">ADC: <span id="valAdc">0</span></div>
-        </div>
-        <div id="pauseOverlay" class="hidden absolute inset-0 bg-black/40 backdrop-blur-[1px] flex items-center justify-center pointer-events-none z-20">
-            <div class="bg-slate-900/90 px-6 py-3 rounded-lg border border-emerald-500/50 text-emerald-400 font-bold tracking-widest text-sm shadow-2xl">|| STOP</div>
-        </div>
+<body>
+<main>
+  <header>
+    <div>
+      <h1 id="appTitle">眨眼测试</h1>
+      <div class="sub">连接设备后，按步骤完成本次测试并保存数据。</div>
     </div>
+    <button id="btnConn" class="primary">连接设备</button>
+  </header>
 
-    <!-- 底部控制器区域 -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4 md:h-24">
-        <div class="bg-slate-800/40 p-3 rounded-lg border border-slate-700 flex items-center justify-between gap-4">
-            <div class="flex-1 flex items-center space-x-2">
-                <span class="text-xs text-slate-400 whitespace-nowrap">SCALE</span>
-                <input type="range" min="1" max="15" step="0.5" value="3" class="flex-1" id="scaleX" oninput="updateSettings()">
-            </div>
-            <div class="flex items-center space-x-2 bg-slate-900/40 p-2 rounded border border-slate-700/60">
-                <label for="pauseToggle" class="text-xs text-slate-300 cursor-pointer select-none">FREEZE</label>
-                <input type="checkbox" id="pauseToggle" class="w-4 h-4 accent-emerald-500 cursor-pointer" onchange="togglePauseMode()"/>
-            </div>
-        </div>
-        
-        <div class="bg-slate-800/40 p-3 rounded-lg border border-slate-700 flex items-center justify-around gap-2">
-            <button onclick="exportToCSV()" class="w-full bg-gradient-to-r from-emerald-600 to-teal-600 active:from-emerald-700 text-white font-bold text-sm py-4 rounded-lg border border-emerald-700 shadow-lg hover:from-emerald-500 hover:to-teal-500 transition-all duration-200">
-                EXPORT CSV
-            </button>
-        </div>
+  <section class="card top">
+    <span id="dot" class="dot"></span>
+    <span id="conn">请先连接采集设备。</span>
+  </section>
+
+  <section class="grid" style="margin-bottom:10px">
+    <div class="metric"><label>状态</label><strong id="mState" class="badc">待机</strong></div>
+    <div class="metric"><label>本次眨眼次数</label><strong id="mCount" class="good">0</strong></div>
+    <div class="metric"><label>近 30 秒次数</label><strong id="mBpm" class="bluec">--</strong></div>
+    <div class="metric"><label>最近一次眨眼</label><strong id="mLast" class="warnc">--</strong></div>
+  </section>
+
+  <section class="card scope">
+    <canvas id="scope"></canvas>
+    <div class="legend">
+      绿：处理后波形<br>灰：原始波形<br>红/蓝：识别范围<br>黄线：已识别眨眼
     </div>
+  </section>
 
-    <script>
-        let globalConfig = { adcMax: 4095, sysVoltage: 3.3, scaleX: 3 };
-        const CANVAS_BG = '#000000', GRID_COLOR = '#1e293b', LINE_COLOR = '#10b981', MAX_HISTORY_POINTS = 36000;
-        const MEAN_FILTER_WINDOW_SIZE = 5;
-        let dataBuffer = [], incomingBuffer = "", isConnected = false, isPaused = false;
-        let bleDevice = null, bleCharacteristic = null; const textDecoder = new TextDecoder();
-        let meanFilterSamples = [], meanFilterSum = 0;
-        
-        let lastReceivedBlinkCount = 0;
-        let lastReceivedStatusId = 0;
+  <section class="card">
+    <div class="controls">
+      <button id="btnStart" class="primary" disabled>开始测试</button>
+      <button id="btnPause" class="warn" disabled>暂停测试</button>
+      <button id="btnStop" class="danger" disabled>结束测试</button>
+      <button id="btnExportBundle" class="ghost" disabled>导出数据</button>
+      <button id="btnClear" class="ghost" disabled>清除当前内容</button>
+    </div>
+    <p class="note" id="help">
+      连接后先佩戴并观察波形是否平稳。填写测试信息后点 <b>开始测试</b>；开始后的约 3 秒内请睁眼并尽量保持自然状态。
+      测试结束后，请在上方点击“导出数据”保存本次测试文件。
+    </p>
+  </section>
 
-        function resetMeanFilter() {
-            meanFilterSamples = [];
-            meanFilterSum = 0;
+  <section class="card">
+    <h2>测试信息</h2>
+    <div class="fields">
+      <div class="field"><label>受试者编号</label><input id="subjectId" type="text" maxlength="64" placeholder="例如 P001"></div>
+      <div class="field"><label>设备编号</label><input id="deviceId" type="text" maxlength="64" placeholder="例如 EOG-01"></div>
+      <div class="field"><label>操作者</label><input id="operatorId" type="text" maxlength="64" placeholder="姓名或编号"></div>
+    </div>
+    <div class="fields">
+      <div class="field"><label>测试备注</label><input id="condition" type="text" maxlength="160" placeholder="例如 常规测试"></div>
+    </div>
+  </section>
+
+  <section id="debugPanel" class="card hidden">
+    <h2>调试台</h2>
+    <div class="fields">
+      <div class="field"><label>调试入口</label><label><input id="debugEnabled" type="checkbox">允许长按“眨眼测试”进入调试台</label></div>
+      <div class="field"><label>自动抗干扰等级</label><input id="fMult" type="number" value="4" min="1" max="12" step="0.5"></div>
+      <div class="field"><label>两次眨眼最短间隔（毫秒）</label><input id="fRefr" type="number" value="300" min="0" step="50"></div>
+    </div>
+    <div class="fields">
+      <div class="field"><label><input id="manualThresholdEnabled" type="checkbox">使用手动抗纹波阈值</label></div>
+      <div class="field"><label>手动阈值（ADC 计数）</label><input id="manualDrop" type="number" value="60" min="18" max="2000" step="1" disabled></div>
+      <div class="field"><label>说明</label><span class="tiny">数值越大越不容易把纹波当作眨眼。</span></div>
+    </div>
+    <p id="debugReadout" class="note">默认使用自动抗干扰设置。手动阈值仅建议在调试时使用。</p>
+    <div class="row"><button id="btnDebugClose" class="ghost">关闭调试台</button></div>
+  </section>
+
+  <section class="card">
+    <h2>结果查看（可选）</h2>
+    <div class="fields">
+      <div class="field"><label>从第几秒开始</label><input id="fT0" type="number" value="0" min="0" step="1"></div>
+      <div class="field"><label>到第几秒结束</label><input id="fT1" type="number" value="0" min="0" step="1"></div>
+      <div class="field"><label>统计时长（秒）</label><input id="fWin" type="number" value="30" min="5" step="5"></div>
+    </div>
+    <div class="fields">
+      <div class="field"><label>每隔几秒统计一次</label><input id="fStep" type="number" value="5" min="1" step="1"></div>
+      <div class="field"><label>本机保存的测试</label><select id="sessionList"><option value="">当前测试</option></select></div>
+      <div class="field"><label>查看历史测试</label><button id="btnLoad" class="ghost" style="width:100%;padding:6px">打开所选测试</button></div>
+    </div>
+    <div class="row" style="margin-bottom:9px">
+      <button id="btnAnalyze" class="primary" disabled>查看结果</button>
+      <button id="btnFull" class="ghost" disabled>使用整段测试</button>
+    </div>
+    <div id="freqWrap"><canvas id="freq"></canvas></div>
+    <div class="summary">
+      <div>区间平均频率<b id="sAvg">--</b></div>
+      <div>区间眨眼次数<b id="sCount">--</b></div>
+      <div>记录时长<b id="sDur">--</b></div>
+      <div>窗口数<b id="sWin">--</b></div>
+    </div>
+  </section>
+
+  <p class="tiny"><button id="btnDemo" class="ghost" style="margin-top:8px;padding:6px 10px;font-size:12px">演示模式（无设备）</button></p>
+</main>
+
+<script>
+"use strict";
+(() => {
+  // ------------------------------------------------------------------
+  // 参数
+  // ------------------------------------------------------------------
+  const CFG = {
+    adcMax: 4095,
+    vref: 3.3,
+    sampleRateHz: 200,
+    maLength: 8,             // 8 点滑动平均：200Hz 下正好在 25/50/75Hz 零点，顺带压 50Hz
+    calibrationMs: 3000,
+    noiseMultiplier: 4,
+    minDropCounts: 18,
+    releaseRatio: 0.45,      // 回升到凹陷深度的 45% 就算脱离
+    minWidthMs: 40,
+    maxWidthMs: 800,
+    refractoryMs: 300,
+    baselineAlpha: 0.0005,   // 极慢基线跟踪，约 10 秒时间常数
+    liveWindowMs: 8000,      // 波形显示最近 8 秒
+    realtimeWindowMs: 30000, // 实时频率窗口
+    maxRecordMs: 15 * 60 * 1000,
+    maxEvents: 5000,
+    sampleTimeoutMs: 3000
+  };
+
+  const SERVICE_UUID = 0xffe0;
+
+  const $ = (id) => document.getElementById(id);
+  const ui = {
+    btnConn: $('btnConn'), btnStart: $('btnStart'), btnPause: $('btnPause'), btnStop: $('btnStop'),
+    btnClear: $('btnClear'), btnAnalyze: $('btnAnalyze'),
+    btnFull: $('btnFull'), btnDemo: $('btnDemo'), btnLoad: $('btnLoad'), btnExportBundle: $('btnExportBundle'),
+    appTitle: $('appTitle'), debugPanel: $('debugPanel'), debugEnabled: $('debugEnabled'), btnDebugClose: $('btnDebugClose'),
+    dot: $('dot'), conn: $('conn'), help: $('help'),
+    mState: $('mState'), mCount: $('mCount'), mBpm: $('mBpm'), mLast: $('mLast'),
+    fT0: $('fT0'), fT1: $('fT1'), fWin: $('fWin'), fStep: $('fStep'), fMult: $('fMult'), fRefr: $('fRefr'),
+    subjectId: $('subjectId'), deviceId: $('deviceId'), operatorId: $('operatorId'), condition: $('condition'),
+    manualThresholdEnabled: $('manualThresholdEnabled'), manualDrop: $('manualDrop'), debugReadout: $('debugReadout'),
+    sessionList: $('sessionList'),
+    sAvg: $('sAvg'), sCount: $('sCount'), sDur: $('sDur'), sWin: $('sWin')
+  };
+
+  // ------------------------------------------------------------------
+  // 状态
+  // ------------------------------------------------------------------
+  const S = {
+    connected: false, hasWrite: false, demo: false, busy: false,
+    viewingHistory: false, timeoutHandling: false, disconnectPending: false,
+    phase: 'IDLE',            // IDLE | CAL | RUN | PAUSE | STOPPED
+    device: null, notifyChar: null, writeChar: null,
+    // 下发给设备（OLED 镜像）用的状态。
+    // shownBpm 的语义是「网页上此刻显示的那个频率」—— 它是唯一真值来源，
+    // 设备侧的显示只允许从它来，这样才不会出现「网页一个频率、设备另一个」。
+    shownBpm: null,           // 次/分；null = 网页显示的是 --
+    writeFn: null,            // 写入闭包（有的模块只支持 writeWithoutResponse）
+    bleWriteChain: Promise.resolve(),
+    // 设备时间轴锚点：把单片机的采样时间戳映射到网页时间轴上。
+    // 之所以需要它，见 deviceTimeline() 上面的说明。
+    dev: { lastMcu: null, lastPage: null, lastSeq: null },
+    rx: '',
+
+    ma: [], maSum: 0,
+    cal: [], calStartMs: 0,
+    baseline: 0, mad: 0, noise: 1, dropCounts: 0, thDown: 0, thUp: 0,
+
+    inBlink: false, fallingMs: 0, minInBlink: 0, refractoryUntil: 0,
+    count: 0,
+    events: [],               // {t, amp, width}
+    samples: [],              // 最近用于画波形的点 {t, raw, filt}
+
+    rec: { t: [], raw: [], filt: [], ev: [] },
+    recStartMs: 0, recEndMs: 0,
+
+    lastT: 0, lastSampleAt: 0, recordingStartedAt: 0,
+    session: null, currentChunk: null, chunkIndex: 0, writeChain: Promise.resolve(), writeError: null,
+    db: null, activeSegment: null, nextEventId: 1,
+    quality: { received: 0, saturatedLow: 0, saturatedHigh: 0 },
+    clock: { anchorTimeline: null, anchorUtc: null, lastWallOffset: null },
+    demoBlinks: []
+  };
+
+  // ------------------------------------------------------------------
+  // 工具
+  // ------------------------------------------------------------------
+  const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+  const DB_NAME = 'blink-collector-v1', DB_VERSION = 1, CHUNK_SAMPLES = 400; // 200 Hz 下每块约 2 秒，降低异常退出时的未提交数据量
+  const iso = (ms) => Number.isFinite(ms) ? new Date(ms).toISOString() : '';
+  const newId = () => crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+  function openDb() {
+    if (S.db) return Promise.resolve(S.db);
+    return new Promise((resolve, reject) => {
+      if (!window.indexedDB) { reject(new Error('当前浏览器不能可靠保存测试数据。')); return; }
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains('sessions')) db.createObjectStore('sessions', { keyPath: 'id' });
+        if (!db.objectStoreNames.contains('chunks')) db.createObjectStore('chunks', { keyPath: ['sessionId', 'index'] });
+        if (!db.objectStoreNames.contains('events')) db.createObjectStore('events', { keyPath: ['sessionId', 'id'] });
+      };
+      request.onsuccess = () => { S.db = request.result; resolve(S.db); };
+      request.onerror = () => reject(request.error || new Error('无法打开本机采集数据库'));
+    });
+  }
+
+  function enqueueWrite(work) {
+    const next = S.writeChain.then(() => openDb()).then(work);
+    S.writeChain = next.catch(err => {
+      S.writeError = String(err && err.message || err);
+      console.error(err);
+      if (S.session) S.session.storage_error = S.writeError;
+      S.phase = 'STOPPED'; S.inBlink = false;
+      lockSessionInputs(false); refreshButtons();
+      setState('保存失败', 'badc');
+      ui.help.textContent = '本次数据未完整保存，请重新测试。请先检查浏览器是否允许本机存储、设备空间是否充足。';
+    });
+    return next;
+  }
+
+  function persistSession() {
+    if (!S.session) return Promise.resolve();
+    const snapshot = JSON.parse(JSON.stringify(S.session));
+    return enqueueWrite(db => new Promise((resolve, reject) => {
+      const tx = db.transaction('sessions', 'readwrite');
+      tx.objectStore('sessions').put(snapshot);
+      tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+    }));
+  }
+
+  function flushChunk() {
+    const chunk = S.currentChunk;
+    if (!chunk || !chunk.rows.length) return Promise.resolve();
+    S.currentChunk = null;
+    return enqueueWrite(db => new Promise((resolve, reject) => {
+      const tx = db.transaction('chunks', 'readwrite');
+      tx.objectStore('chunks').put(chunk);
+      tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+    })).catch(err => {
+      // Keep an uncommitted block available for a retry and a clear diagnostic.
+      if (!S.currentChunk || S.currentChunk.index !== chunk.index) S.currentChunk = chunk;
+      throw err;
+    });
+  }
+
+  function persistEvent(event) {
+    if (!S.session) return;
+    enqueueWrite(db => new Promise((resolve, reject) => {
+      const tx = db.transaction('events', 'readwrite');
+      tx.objectStore('events').put(event);
+      tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+    }));
+  }
+
+  async function waitForWrites() {
+    await flushChunk(); await S.writeChain;
+    if (S.writeError) throw new Error(`本次数据保存不完整：${S.writeError}。请重新测试。`);
+  }
+
+  function visitChunks(sessionId, visit) {
+    return openDb().then(db => new Promise((resolve, reject) => {
+      const tx = db.transaction('chunks', 'readonly');
+      const range = IDBKeyRange.bound([sessionId, 0], [sessionId, Number.MAX_SAFE_INTEGER]);
+      const request = tx.objectStore('chunks').openCursor(range);
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) return;
+        visit(cursor.value);
+        cursor.continue();
+      };
+      tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+    }));
+  }
+
+  function readEvents(sessionId) {
+    return openDb().then(db => new Promise((resolve, reject) => {
+      const tx = db.transaction('events', 'readonly');
+      const range = IDBKeyRange.bound([sessionId, 0], [sessionId, Number.MAX_SAFE_INTEGER]);
+      const request = tx.objectStore('events').getAll(range);
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => reject(request.error);
+    }));
+  }
+
+  function saveBlob(name, type, parts) {
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(new Blob(parts, { type }));
+    link.href = url; link.download = name; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function median(arr) {
+    if (!arr.length) return 0;
+    const a = Float64Array.from(arr).sort();
+    const n = a.length;
+    return n % 2 ? a[(n - 1) >> 1] : (a[n / 2 - 1] + a[n / 2]) / 2;
+  }
+
+  function setConnText(t, online) {
+    ui.conn.textContent = t;
+    ui.dot.classList.toggle('on', !!online);
+  }
+
+  function setState(name, cls) {
+    ui.mState.textContent = name;
+    ui.mState.className = cls;
+  }
+
+  function refreshButtons() {
+    const c = S.connected || S.demo;
+    const running = S.phase === 'RUN', paused = S.phase === 'PAUSE', cal = S.phase === 'CAL';
+    ui.btnStart.disabled = !c || running || paused || cal;
+    ui.btnStart.textContent = (paused || S.phase === 'STOPPED') ? '重新开始测试' : '开始测试';
+    ui.btnPause.disabled = !(running || paused);
+    ui.btnPause.textContent = paused ? '继续测试' : '暂停测试';
+    ui.btnStop.disabled = !(running || paused || cal);
+    const hasSession = !!S.session;
+    ui.btnClear.disabled = !(hasSession || S.count);
+    ui.btnExportBundle.disabled = !hasSession || running || paused || cal;
+    ui.btnAnalyze.disabled = !hasSession;
+    ui.btnFull.disabled = !hasSession;
+    ui.btnLoad.disabled = running || paused || cal || S.busy;
+    if (S.busy) [ui.btnConn, ui.btnStart, ui.btnStop, ui.btnClear, ui.btnExportBundle, ui.btnPause, ui.btnAnalyze, ui.btnFull, ui.btnLoad].forEach(b => { b.disabled = true; });
+  }
+
+  // ------------------------------------------------------------------
+  // 信号处理：滑动平均 + 眨眼判决
+  // ------------------------------------------------------------------
+  function pushMA(v) {
+    const n = CFG.maLength;
+    S.ma.push(v); S.maSum += v;
+    if (S.ma.length > n) S.maSum -= S.ma.shift();
+    return S.maSum / S.ma.length;
+  }
+
+  function resetFilter() { S.ma = []; S.maSum = 0; }
+
+  function currentConfig() {
+    return {
+      adcMax: CFG.adcMax, sampleRateHz: CFG.sampleRateHz, maLength: CFG.maLength,
+      calibrationMs: CFG.calibrationMs, noiseMultiplier: Number(ui.fMult.value) || CFG.noiseMultiplier,
+      minDropCounts: CFG.minDropCounts, releaseRatio: CFG.releaseRatio,
+      minWidthMs: CFG.minWidthMs, maxWidthMs: CFG.maxWidthMs,
+      refractoryMs: Number(ui.fRefr.value) || CFG.refractoryMs, baselineAlpha: CFG.baselineAlpha,
+      manualThresholdEnabled: ui.manualThresholdEnabled.checked,
+      manualDropCounts: Math.max(CFG.minDropCounts, Number(ui.manualDrop.value) || 60)
+    };
+  }
+
+  function lockSessionInputs(locked) {
+    [ui.subjectId, ui.deviceId, ui.operatorId, ui.condition, ui.fMult, ui.fRefr, ui.manualThresholdEnabled].forEach(input => { input.disabled = locked; });
+    ui.manualDrop.disabled = locked || !ui.manualThresholdEnabled.checked;
+  }
+
+  const DEBUG_STORAGE_KEY = 'blink-debug-enabled';
+  function setDebugEntrance(enabled) {
+    ui.debugEnabled.checked = enabled;
+    try { localStorage.setItem(DEBUG_STORAGE_KEY, enabled ? '1' : '0'); } catch (_) {}
+    if (!enabled) ui.debugPanel.classList.add('hidden');
+  }
+
+  function updateDebugControls() {
+    ui.manualDrop.disabled = ui.manualThresholdEnabled.disabled || !ui.manualThresholdEnabled.checked;
+    ui.debugReadout.textContent = ui.manualThresholdEnabled.checked
+      ? `当前使用手动抗纹波阈值：下降至少 ${ui.manualDrop.value || 60} ADC 计数才会识别为眨眼。`
+      : '当前使用自动抗干扰设置。手动阈值仅建议在调试时使用。';
+  }
+
+  function openDebugPanel() {
+    if (!ui.debugEnabled.checked) {
+      if (!confirm('调试入口当前关闭。是否开启并进入调试台？')) return;
+      setDebugEntrance(true);
+    }
+    ui.debugPanel.classList.remove('hidden');
+    updateDebugControls();
+  }
+
+  let debugPressTimer = null;
+  ui.appTitle.addEventListener('pointerdown', () => { debugPressTimer = setTimeout(openDebugPanel, 1200); });
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach(type => ui.appTitle.addEventListener(type, () => {
+    clearTimeout(debugPressTimer); debugPressTimer = null;
+  }));
+  ui.debugEnabled.onchange = () => setDebugEntrance(ui.debugEnabled.checked);
+  ui.manualThresholdEnabled.onchange = updateDebugControls;
+  ui.manualDrop.oninput = updateDebugControls;
+  ui.btnDebugClose.onclick = () => ui.debugPanel.classList.add('hidden');
+  try { ui.debugEnabled.checked = localStorage.getItem(DEBUG_STORAGE_KEY) === '1'; } catch (_) { ui.debugEnabled.checked = false; }
+  updateDebugControls();
+
+  function beginSegment(t, utcMs) {
+    if (!S.session || S.activeSegment) return;
+    S.activeSegment = { id: S.session.segments.length + 1, start_timeline_ms: t, start_utc_ms: utcMs, end_timeline_ms: null, end_utc_ms: null };
+    S.session.segments.push(S.activeSegment);
+  }
+
+  function activeDurationMs(session, from, to) {
+    if (!session || !Number.isFinite(from) || !Number.isFinite(to) || to <= from) return 0;
+    const segments = Array.isArray(session.segments) ? session.segments : [];
+    let total = 0;
+    for (const seg of segments) {
+      const start = Number(seg.start_timeline_ms);
+      const end = Number.isFinite(Number(seg.end_timeline_ms)) ? Number(seg.end_timeline_ms) : to;
+      if (!Number.isFinite(start) || end <= start) continue;
+      total += Math.max(0, Math.min(end, to) - Math.max(start, from));
+    }
+    // Old records may not have segments. Preserve their previous interpretation.
+    return total || (segments.length ? 0 : to - from);
+  }
+
+  function endSegment(t, utcMs) {
+    if (!S.activeSegment) return;
+    S.activeSegment.end_timeline_ms = t; S.activeSegment.end_utc_ms = utcMs;
+    S.activeSegment = null;
+  }
+
+  function addEvent(type, t, utcMs, extra = {}) {
+    if (!S.session) return null;
+    const event = { sessionId: S.session.id, id: S.nextEventId++, type, timeline_ms: t, utc_ms: utcMs, phone_utc_iso: iso(utcMs), ...extra };
+    persistEvent(event);
+    return event;
+  }
+
+  async function beginFormalSession() {
+    if (S.busy) return;
+    if (!(S.connected || S.demo)) return;
+    if (S.phase === 'RUN' || S.phase === 'CAL' || S.phase === 'PAUSE') return;
+    S.busy = true; refreshButtons();
+    try {
+      await openDb();
+      await S.writeChain;
+      S.writeError = null;
+      resetFilter();
+      S.phase = 'CAL'; S.cal = []; S.calStartMs = null;
+      setBlinkCount(0); S.events = []; S.inBlink = false; S.refractoryUntil = 0;
+      S.rec = { t: [], raw: [], filt: [], ev: [] }; S.recStartMs = 0; S.recEndMs = 0;
+      S.currentChunk = null; S.chunkIndex = 0; S.nextEventId = 1; S.activeSegment = null;
+      S.viewingHistory = false; S.recordingStartedAt = performance.now(); S.timeoutHandling = false; S.disconnectPending = false;
+      S.lastT = 0; S.lastSampleAt = 0;
+      S.baseline = 0; S.mad = 0; S.noise = 1; S.dropCounts = 0; S.thDown = 0; S.thUp = 0;
+      S.quality = { received: 0, saturatedLow: 0, saturatedHigh: 0 };
+      S.clock = { anchorTimeline: null, anchorUtc: null, lastWallOffset: null };
+      S.session = {
+        id: newId(), schema: 'blink-collector/v1', status: 'recording',
+        created_utc_ms: Date.now(), created_utc_iso: iso(Date.now()),
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '', timezone_offset_minutes: -new Date().getTimezoneOffset(),
+        participant_id: ui.subjectId.value.trim(), device_id: ui.deviceId.value.trim(), operator_id: ui.operatorId.value.trim(), condition: ui.condition.value.trim(),
+        bluetooth_name: S.device && S.device.name ? S.device.name : '', bluetooth_id: S.device && S.device.id ? S.device.id : '',
+        protocol: 'pending', time_source: 'phone_clock_anchor + device_elapsed_ms_when_available', config: currentConfig(), anchors: [], segments: [], quality: {}, detector: null
+      };
+      lockSessionInputs(true);
+      setState('准备中', 'warnc');
+      ui.help.textContent = '正在准备测试：请睁眼、尽量保持自然状态，约 3 秒后开始计数。';
+      await persistSession();
+      refreshButtons();
+    } catch (err) {
+      S.phase = 'STOPPED'; lockSessionInputs(false); refreshButtons();
+      console.error(err); alert(`无法开始测试：${err.message || err}`);
+    } finally {
+      S.busy = false; refreshButtons();
+      if (S.disconnectPending && S.session && (S.phase === 'CAL' || S.phase === 'RUN' || S.phase === 'PAUSE')) {
+        S.disconnectPending = false;
+        stopSession('bluetooth_disconnected').catch(console.error);
+      }
+    }
+  }
+
+  function finishCalibration() {
+    const config = S.session ? S.session.config : currentConfig();
+    const base = median(S.cal);
+    const calMin = S.cal.length ? Math.min(...S.cal) : 0;
+    const calMax = S.cal.length ? Math.max(...S.cal) : 0;
+    const railSamples = S.cal.filter(v => v <= 8 || v >= CFG.adcMax - 8).length;
+    const calibrationInvalid = S.cal.length < CFG.sampleRateHz || base <= 8 || base >= CFG.adcMax - 8 || railSamples / Math.max(1, S.cal.length) > 0.05;
+    if (calibrationInvalid) {
+      S.quality.calibration_valid = false;
+      S.quality.calibration_samples = S.cal.length;
+      S.quality.calibration_min = calMin;
+      S.quality.calibration_max = calMax;
+      S.phase = 'STOPPED'; S.inBlink = false;
+      if (S.session) {
+        S.session.status = 'calibration_invalid';
+        S.session.ended_utc_ms = Date.now(); S.session.ended_utc_iso = iso(S.session.ended_utc_ms);
+        S.session.quality = { ...S.quality };
+        addEvent('calibration_invalid', S.lastT, sampleUtc(S.lastT, Date.now()), { baseline: base, min: calMin, max: calMax });
+        persistSession().catch(console.error);
+      }
+      lockSessionInputs(false); setState('信号异常', 'badc'); refreshButtons();
+      ui.help.textContent = '准备阶段信号异常或接近量程边界，本次测试已停止，请检查佩戴、传感器和连接后重新测试。';
+      return;
+    }
+    const dev = S.cal.map(v => Math.abs(v - base));
+    const mad = median(dev);
+    // 1.4826 * MAD 是正态分布下标准差的稳健估计
+    const sigma = Math.max(1, 1.4826 * mad);
+    const drop = config.manualThresholdEnabled
+      ? Math.max(config.minDropCounts, config.manualDropCounts)
+      : Math.max(config.minDropCounts, sigma * config.noiseMultiplier);
+
+      S.baseline = base;
+    S.mad = mad; S.noise = sigma; S.dropCounts = drop;
+    S.quality.calibration_valid = true;
+    S.quality.calibration_samples = S.cal.length;
+    S.quality.calibration_min = Math.min(...S.cal);
+    S.quality.calibration_max = Math.max(...S.cal);
+    S.thDown = base - drop;
+    S.thUp = base - drop * config.releaseRatio;
+    S.phase = 'RUN';
+    if (S.session) {
+      S.session.detector = { baseline: base, mad, sigma, drop_counts: drop, threshold_down: S.thDown, threshold_up: S.thUp, calibrated_timeline_ms: S.lastT };
+      addEvent('calibration_complete', S.lastT, sampleUtc(S.lastT, Date.now()));
+      persistSession();
+    }
+    setState('计数中', 'good');
+    ui.help.innerHTML = '测试中：黄色竖线表示已识别的眨眼。若波形明显异常，请结束本次测试后重新开始。';
+    refreshButtons();
+    if (!ui.debugPanel.classList.contains('hidden')) {
+      ui.debugReadout.textContent = `基线 ${base.toFixed(0)}；当前下降阈值 ${S.thDown.toFixed(0)}；${config.manualThresholdEnabled ? `手动抗纹波阈值 ${config.manualDropCounts} ADC 计数。` : '自动抗干扰设置。'}`;
+    }
+  }
+
+  function detect(t, filt) {
+    const config = S.session ? S.session.config : currentConfig();
+    const refr = config.refractoryMs;
+
+    if (!S.inBlink) {
+      if (filt < S.thDown && t >= S.refractoryUntil) {
+        S.inBlink = true;
+        S.fallingMs = t;
+        S.minInBlink = filt;
+      }
+      // 只在非事件状态慢慢更新基线，避免眨眼把基线拖下去
+      const drop = S.dropCounts || Math.max(0, S.baseline - S.thDown);
+      const a = config.baselineAlpha;
+      S.baseline += a * (filt - S.baseline);
+      S.thDown = S.baseline - drop;
+      S.thUp = S.baseline - drop * config.releaseRatio;
+    } else {
+      if (filt < S.minInBlink) S.minInBlink = filt;
+      const width = t - S.fallingMs;
+
+      if (filt > S.thUp) {
+        if (width >= config.minWidthMs && width <= config.maxWidthMs) {
+          setBlinkCount(S.count + 1);
+          pushStats();             // 次数变了就立刻同步给设备（只在眨眼这一刻，不是每个采样点）
+          const ev = { t: S.fallingMs, utcMs: sampleUtc(S.fallingMs, Date.now()), amp: Math.round(S.baseline - S.minInBlink), width };
+          S.events.push(ev);
+          if (S.events.length > CFG.maxEvents) S.events.shift();
+          S.rec.ev.push(ev);
+          addEvent('blink', ev.t, ev.utcMs, { amplitude_counts: ev.amp, width_ms: width, algorithm: 'web-live-v1' });
+          ui.mLast.textContent = `${width.toFixed(0)} ms / ${ev.amp}`;
         }
+        S.refractoryUntil = t + refr;
+        S.inBlink = false;
+      } else if (width > config.maxWidthMs) {
+        S.inBlink = false;                 // 太宽，判为伪迹丢弃
+        S.refractoryUntil = t + refr;
+      }
+    }
+    /* 注意：千万不要在这里（每个采样点都跑）刷新屏幕或下发统计。
+       detect() 是 200Hz 调用的，在这里写 DOM / 发蓝牙会让下行涨到 2.4 kB/s。
+       屏幕刷新只在 setBlinkCount() 里做，下发只在眨眼那一刻和 500ms tick 做。 */
+  }
 
-        function applyMeanFilter(sample) {
-            meanFilterSamples.push(sample);
-            meanFilterSum += sample;
+  function realtimeBpm(nowMs) {
+    if (!S.events.length) return null;
+    const win = CFG.realtimeWindowMs;
+    const from = nowMs - win;
+    let n = 0;
+    for (let i = S.events.length - 1; i >= 0; i--) {
+      if (S.events[i].t >= from) n++; else break;
+    }
+    if (n === 0) return 0;
+    const activeMs = S.session
+      ? activeDurationMs(S.session, from, nowMs)
+      : Math.min(win, Math.max(1000, nowMs - (S.recStartMs || 0)));
+    if (activeMs < 1000) return null;
+    return Math.round(n / activeMs * 60000);
+  }
 
-            if (meanFilterSamples.length > MEAN_FILTER_WINDOW_SIZE) {
-                meanFilterSum -= meanFilterSamples.shift();
-            }
+  // ------------------------------------------------------------------
+  // 采样入口
+  // ------------------------------------------------------------------
+  function sampleUtc(t, receivedUtcMs) {
+    if (!S.session) return receivedUtcMs;
+    const wallOffset = receivedUtcMs - performance.now();
+    if (S.clock.anchorTimeline === null) {
+      S.clock.anchorTimeline = t; S.clock.anchorUtc = receivedUtcMs; S.clock.lastWallOffset = wallOffset;
+      S.session.anchors.push({ timeline_ms: t, phone_utc_ms: receivedUtcMs, phone_utc_iso: iso(receivedUtcMs), reason: 'first_recorded_sample' });
+    } else if (Math.abs(wallOffset - S.clock.lastWallOffset) > 1000) {
+      S.clock.anchorTimeline = t; S.clock.anchorUtc = receivedUtcMs; S.clock.lastWallOffset = wallOffset;
+      S.session.anchors.push({ timeline_ms: t, phone_utc_ms: receivedUtcMs, phone_utc_iso: iso(receivedUtcMs), reason: 'phone_clock_changed' });
+      addEvent('phone_clock_changed', t, receivedUtcMs, { note: '手机系统时钟变化超过 1 秒；此处建立新的时间锚点。' });
+    } else {
+      S.clock.lastWallOffset = wallOffset;
+    }
+    return S.clock.anchorUtc + (t - S.clock.anchorTimeline);
+  }
 
-            return meanFilterSum / meanFilterSamples.length;
+  function updateQuality(raw) {
+    const q = S.quality;
+    let flags = 0;
+    q.received++;
+    if (raw <= 2) { q.saturatedLow++; flags |= 2; }
+    if (raw >= CFG.adcMax - 2) { q.saturatedHigh++; flags |= 4; }
+    return flags;
+  }
+
+  function appendRecordedSample(t, utcMs, receivedUtcMs, raw, filt, flags) {
+    if (!S.session) return;
+    beginSegment(t, utcMs);
+    if (!S.currentChunk) {
+      S.currentChunk = { sessionId: S.session.id, index: S.chunkIndex++, start_timeline_ms: t, start_utc_ms: utcMs, rows: [] };
+    }
+    S.currentChunk.rows.push([t, utcMs, receivedUtcMs, raw, Math.round(filt), S.activeSegment ? S.activeSegment.id : 0, flags]);
+    S.session.first_timeline_ms ??= t; S.session.first_utc_ms ??= utcMs;
+    S.session.last_timeline_ms = t; S.session.last_utc_ms = utcMs;
+    if (S.currentChunk.rows.length >= CHUNK_SAMPLES) {
+      flushChunk().catch(console.error);
+      persistSession().catch(console.error);
+    }
+  }
+
+  function onSample(t, raw, filtFromDevice) {
+    if (S.viewingHistory && S.phase === 'STOPPED') return;
+    if (!Number.isFinite(t) || !Number.isFinite(raw) || raw < 0 || raw > CFG.adcMax) return;
+    S.lastT = t; S.lastSampleAt = performance.now();
+
+    const filt = Number.isFinite(filtFromDevice) ? filtFromDevice : pushMA(raw);
+    if (Number.isFinite(filtFromDevice)) pushMA(raw); // 保持滤波器状态连续
+
+    const receivedUtcMs = Date.now();
+    const recording = S.session && (S.phase === 'RUN' || S.phase === 'CAL');
+    const utcMs = recording ? sampleUtc(t, receivedUtcMs) : receivedUtcMs;
+    const flags = recording ? updateQuality(raw) : 0;
+    if (recording) appendRecordedSample(t, utcMs, receivedUtcMs, raw, filt, flags);
+
+    S.samples.push({ t, raw, filt });
+    if (S.samples.length > 4000) S.samples.shift();
+
+    if (S.phase === 'CAL') {
+      if (S.calStartMs === null) S.calStartMs = t;
+      S.cal.push(filt);
+      if (t - S.calStartMs >= CFG.calibrationMs) finishCalibration();
+    } else if (S.phase === 'RUN') {
+      detect(t, filt);
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // 协议解析（兼容三种帧）
+  // ------------------------------------------------------------------
+  function onChunk(text) {
+    S.rx += text;
+    if (S.rx.length > 32768) {
+      S.rx = '';
+      if (S.session && (S.phase === 'CAL' || S.phase === 'RUN')) {
+        S.quality.discontinuities = (S.quality.discontinuities || 0) + 1;
+        addEvent('rx_buffer_overflow', S.lastT, sampleUtc(S.lastT, Date.now()), { note: '接收缓存超过限制，部分帧被丢弃。' });
+        resetFilter(); S.inBlink = false;
+      }
+    }
+    const parts = S.rx.split('\n');
+    S.rx = parts.pop();
+    for (const line of parts) parseLine(line);
+  }
+
+  // ------------------------------------------------------------------
+  // 设备时间轴：用单片机的采样时间戳，而不是通知的到达时刻
+  // ------------------------------------------------------------------
+  // ⚠️ 这件事非做不可，原因是固件的发送是**突发式**的：
+  //    固件每 80ms 攒够 16 个样本（DMA 半块）才打包，
+  //    304 字节在 115200 下连续吐 26.4ms，然后静默 53.6ms。
+  //    所以「到达时刻」不是「采样时刻」：
+  //      · 同一块的 16 个点会拿到几乎相同的时刻，块与块之间空 54ms
+  //      · 示波器在相邻点间隔 > 12ms 时断线 → 波形被画成一串 1px 短划
+  //      · detect() 的 width = t - fallingMs 会被量化到约 80ms，不可靠
+  //    固件本来就发了采样时刻（帧里的第 3 个字段），用它就没有这些问题，
+  //    时间轴变成严格 5ms 等间隔，与滤波器的采样计数假设一致。
+  //
+  //    代价：这套映射只在 4 字段帧（D,seq,t_ms,raw）上可用。
+  //    如果哪天把固件的 FRAME_FULL 改成 0（发 D,raw），就退回到到达时刻，
+  //    上面的三个问题会全部回来 —— 所以 FRAME_FULL 必须保持 1。
+  //
+  // 比较相邻帧；正常 uint32 回绕连续推进，重启则分段并保持时间单调。
+  function breakSampleContinuity(reason, details = {}) {
+    if (S.session && ['CAL', 'RUN', 'PAUSE'].includes(S.phase)) {
+      endSegment(S.lastT, sampleUtc(S.lastT, Date.now()));
+      S.quality.discontinuities = (S.quality.discontinuities || 0) + 1;
+      S.quality.missingSamples = (S.quality.missingSamples || 0) + (details.missing || 0);
+      addEvent(reason, S.lastT, sampleUtc(S.lastT, Date.now()), details);
+      ui.help.textContent = '检测到数据中断，本次记录已标记，请结束后重新测试。';
+    }
+    resetFilter(); S.inBlink = false;
+    S.refractoryUntil = S.lastT + CFG.refractoryMs;
+    if (S.phase === 'CAL') { S.cal = []; S.calStartMs = null; }
+  }
+
+  function deviceTimeline(mcuMs, seq) {
+    const d = S.dev;
+    const valid = v => Number.isInteger(v) && v >= 0 && v <= 0xffffffff;
+    if (!valid(mcuMs) || !valid(seq)) return NaN;
+    const period = 1000 / CFG.sampleRateHz;
+    if (d.lastMcu === null) {
+      d.lastMcu = mcuMs; d.lastSeq = seq; d.lastPage = performance.now();
+      return d.lastPage;
+    }
+    const dt = (mcuMs - d.lastMcu) >>> 0;
+    const ds = (seq - d.lastSeq) >>> 0;
+    if (dt === 0 && ds === 0) return NaN; // 重复帧不重复计数
+    const reset = dt === 0 || dt >= 0x80000000 || ds === 0 || ds >= 0x80000000;
+    if (reset) {
+      breakSampleContinuity('device_timeline_resync', { previous_ms: d.lastMcu, device_ms: mcuMs });
+      d.lastPage = Math.max(performance.now(), d.lastPage + period);
+    } else {
+      if (ds !== 1 || Math.abs(dt - period) > 2) {
+        breakSampleContinuity('sample_gap', { missing: Math.max(ds - 1, Math.round(dt / period) - 1, 0), delta_ms: dt });
+      }
+      d.lastPage += dt;
+    }
+    d.lastMcu = mcuMs; d.lastSeq = seq;
+    return d.lastPage;
+  }
+
+  function parseLine(line) {
+    const s = line.trim();
+    if (!s) return;
+    const p = s.split(',');
+    if (p[0] === 'B') {
+      if (S.session && (S.phase === 'RUN' || S.phase === 'PAUSE' || S.phase === 'CAL')) {
+        addEvent('physical_button', S.lastT, sampleUtc(S.lastT, Date.now()));
+      }
+      return;
+    }
+    const phoneTimelineMs = performance.now();
+    if (p.length === 1 && /^\d+$/.test(p[0])) {
+      if (S.session) S.session.protocol = 'raw (arrival time only)';
+      onSample(phoneTimelineMs, +p[0]);
+      return;
+    }
+    if (p[0] !== 'D') return;
+
+    if (p.length === 2) {
+      if (!/^\d+$/.test(p[1])) { breakSampleContinuity('invalid_frame'); return; }
+      if (S.session) S.session.protocol = 'D,raw (arrival time only)';
+      // 正式格式：D,raw；没有采样时间戳，只能用到达时刻（见 deviceTimeline 的说明）
+      onSample(phoneTimelineMs, +p[1]);
+    } else if (p.length === 4) {
+      // 当前固件 D,seq,t_ms,raw：★ 用 p[2] 的采样时刻建时间轴 ★
+      // （这一分支必须走 deviceTimeline，否则波形会断成点线）
+      // 损坏的正式帧丢弃并留痕，不能伪装成使用到达时间的有效采样。
+      if (!p.slice(1).every(v => /^\d+$/.test(v)) || +p[3] > CFG.adcMax) {
+        breakSampleContinuity('invalid_frame'); return;
+      }
+      if (S.session) S.session.protocol = 'D,seq,t_ms,raw';
+      onSample(deviceTimeline(+p[2], +p[1]), +p[3]);
+    } else if (p.length === 8) {
+      // 旧固件的 8 字段格式：p[2] 是那颗固件自己的计数，时基未知，
+      // 不敢当时间戳用，仍按到达时刻处理。
+      onSample(phoneTimelineMs, +p[3]);
+    } else if (p.length === 5) {
+      onSample(phoneTimelineMs, +p[1]);
+    }
+  }
+
+  // 眨眼次数的唯一出口：改 S.count 的同时刷新屏幕。
+  // 这样「屏幕上的数」和「下发给设备的数」永远同源，
+  // 不会出现开始一次新测试后屏幕还显示旧数字、而设备已经是 0 的情况。
+  function setBlinkCount(n) {
+    S.count = n;
+    ui.mCount.textContent = String(n);
+  }
+
+  // ------------------------------------------------------------------
+  // 下发统计给设备（OLED 镜像显示）
+  // ------------------------------------------------------------------
+  // ⚠️ 这里是「设备显示什么」的唯一出口。判决与统计始终只在网页里做，
+  //    设备不参与任何计算，只是把这两个数拿去显示 —— HANDOFF §4 的架构不变。
+  //
+  //    协议：N,<本次眨眼次数>,<眨眼频率次/分>\n
+  //          频率 = -1 表示网页此刻显示的是 --（还没算出来 / 不在记录中）
+  //
+  //    次数取 S.count，频率取 S.shownBpm —— 也就是屏幕上正在显示的那个值。
+  //    两者同源，所以不会出现「网页一个频率、设备另一个频率」。
+  function pushStats() {
+    if (!S.connected || !S.writeFn) return;
+    const bpm = (S.shownBpm === null || !Number.isFinite(S.shownBpm)) ? -1 : Math.round(S.shownBpm);
+    const payload = `N,${S.count},${bpm}\n`;
+    const write = S.writeFn;
+    S.bleWriteChain = S.bleWriteChain
+      .then(() => write(new TextEncoder().encode(payload)))
+      .catch(() => {});
+  }
+
+  // ------------------------------------------------------------------
+  // BLE
+  // ------------------------------------------------------------------
+  async function connect() {
+    if (!navigator.bluetooth) {
+      alert('当前浏览器无法连接采集设备。');
+      return;
+    }
+    try {
+      setConnText('选择蓝牙设备…');
+      S.device = await navigator.bluetooth.requestDevice({
+        filters: [{ services: [SERVICE_UUID] }, { services: [0xfff0] }],
+        optionalServices: [SERVICE_UUID, 0xfff0]
+      });
+      S.device.addEventListener('gattserverdisconnected', onDisconnected);
+      const server = await S.device.gatt.connect();
+      let service;
+      try { service = await server.getPrimaryService(SERVICE_UUID); }
+      catch (err) {
+        if (err.name !== 'NotFoundError') throw err;
+        service = await server.getPrimaryService(0xfff0);
+      }
+      const chars = await service.getCharacteristics();
+      const selected = selectBleChannels(service.uuid, chars);
+      S.notifyChar = selected.notify; S.writeChar = selected.write;
+      // 两种写入方式要分开选：只支持 writeWithoutResponse 的模块上，
+      // 直接调 writeValue() 会抛 NotSupportedError。
+      S.writeFn = !S.writeChar ? null
+                : (S.writeChar.properties.write
+                    ? (b) => S.writeChar.writeValueWithResponse
+                      ? S.writeChar.writeValueWithResponse(b)
+                      : S.writeChar.writeValue(b)
+                    : (b) => S.writeChar.writeValueWithoutResponse(b));
+      if (!S.notifyChar) throw new Error('这个服务下没有可通知的特征');
+
+      S.rx = ''; S.dev = { lastMcu: null, lastPage: null, lastSeq: null }; S.bleWriteChain = Promise.resolve();
+      S.notifyChar.addEventListener('characteristicvaluechanged',
+        e => onChunk(new TextDecoder().decode(e.target.value)));
+      await S.notifyChar.startNotifications();
+
+      S.connected = true;
+      S.demo = false;
+      ui.btnConn.textContent = '断开设备';
+      setConnText(`${S.device.name || '采集设备'} 已连接，可以开始准备测试。`, true);
+      refreshButtons();
+    } catch (err) {
+      console.error(err);
+      if (S.device && S.device.gatt.connected) S.device.gatt.disconnect();
+      S.notifyChar = null; S.writeChar = null; S.writeFn = null;
+      setConnText(`连接失败：${err.message || err}`);
+      S.connected = false;
+      refreshButtons();
+    }
+  }
+
+  function selectBleChannels(serviceUuid, chars) {
+    const uuid = n => `0000${n}-0000-1000-8000-00805f9b34fb`;
+    const byId = id => chars.find(c => c.uuid.toLowerCase() === uuid(id));
+    const notifies = c => c && (c.properties.notify || c.properties.indicate);
+    const writes = c => c && (c.properties.write || c.properties.writeWithoutResponse);
+    const ebyte = serviceUuid.toLowerCase() === uuid('fff0');
+    let notify = byId(ebyte ? 'fff1' : 'ffe2');
+    let write = byId(ebyte ? 'fff2' : 'ffe1');
+    if (!notifies(notify) && !ebyte) {
+      // 兼容现有 KT：只有一个明确的通知通道时才允许回退。
+      const candidates = chars.filter(notifies);
+      notify = candidates.length === 1 ? candidates[0] : null;
+    }
+    if (!writes(write) && !ebyte) {
+      const candidates = chars.filter(writes);
+      write = candidates.length === 1 ? candidates[0] : null;
+    }
+    if (!notifies(notify)) throw new Error('无法确定设备的数据接收通道，请检查设备配置。');
+    return { notify, write: writes(write) ? write : null };
+  }
+
+  function onDisconnected() {
+    S.connected = false;
+    S.notifyChar = null; S.writeChar = null; S.writeFn = null; S.rx = ''; S.bleWriteChain = Promise.resolve();
+    ui.btnConn.textContent = '连接设备';
+    setConnText('设备已断开');
+    if (S.phase === 'RUN' || S.phase === 'CAL' || S.phase === 'PAUSE') {
+      S.disconnectPending = true;
+      if (!S.busy) {
+        S.disconnectPending = false;
+        stopSession('bluetooth_disconnected').catch(console.error);
+      }
+    }
+    refreshButtons();
+  }
+
+  ui.btnConn.onclick = () => {
+    if (S.connected && S.device && S.device.gatt.connected) S.device.gatt.disconnect();
+    else if (S.demo) { stopDemo(); } else connect();
+  };
+
+  // ------------------------------------------------------------------
+  // 按钮
+  // ------------------------------------------------------------------
+  ui.btnStart.onclick = () => { beginFormalSession(); };
+  ui.btnPause.onclick = () => {
+    if (S.busy || !S.session) return;
+    if (S.phase === 'RUN') {
+      const utcMs = sampleUtc(S.lastT, Date.now());
+      endSegment(S.lastT, utcMs); addEvent('pause', S.lastT, utcMs); persistSession();
+      S.phase = 'PAUSE'; setState('已暂停', 'warnc');
+    } else if (S.phase === 'PAUSE') {
+      resetFilter(); S.inBlink = false;
+      S.recordingStartedAt = performance.now(); S.lastSampleAt = 0;
+      S.refractoryUntil = S.lastT + (S.session ? S.session.config.refractoryMs : CFG.refractoryMs);
+      addEvent('resume', S.lastT, sampleUtc(S.lastT, Date.now()));
+      S.phase = 'RUN'; setState('计数中', 'good');
+    }
+    refreshButtons();
+  };
+  async function stopSession(reason = 'user_stop') {
+    if (!S.session || (S.busy && reason !== 'data_timeout')) return;
+    S.busy = true; refreshButtons();
+    try {
+    const utcMs = sampleUtc(S.lastT, Date.now());
+    endSegment(S.lastT, utcMs); addEvent(reason, S.lastT, utcMs);
+    S.phase = 'STOPPED'; S.inBlink = false; S.session.status = reason;
+    S.session.ended_utc_ms = utcMs; S.session.ended_utc_iso = iso(utcMs); S.session.quality = { ...S.quality };
+    await persistSession(); await waitForWrites();
+    if (reason === 'data_timeout' || reason === 'bluetooth_disconnected') {
+      S.shownBpm = null; ui.mBpm.textContent = '--';
+    }
+    pushStats();
+    lockSessionInputs(false);
+    setState('已停止', 'badc');
+    ui.help.textContent = S.quality.discontinuities
+      ? '本次记录存在数据中断，建议重新测试。可以导出数据用于检查。'
+      : '测试已结束并保存在本机。请点击“导出数据”保存本次测试文件。';
+    fillRangeInputs();
+    refreshButtons();
+    analyze().catch(console.error);
+    refreshSessionList();
+    } finally { S.busy = false; refreshButtons(); }
+  }
+  ui.btnStop.onclick = () => { stopSession().catch(console.error); };
+  ui.btnClear.onclick = () => {
+    if (S.busy || S.phase === 'RUN' || S.phase === 'CAL' || S.phase === 'PAUSE') return;
+    setBlinkCount(0); S.events = []; S.samples = []; S.session = null; S.currentChunk = null;
+    S.viewingHistory = false; S.writeError = null; S.recordingStartedAt = 0;
+    S.rec = { t: [], raw: [], filt: [], ev: [] }; S.recStartMs = 0; S.recEndMs = 0; S.phase = 'IDLE';
+    lockSessionInputs(false);
+    ui.mBpm.textContent = '--'; ui.mLast.textContent = '--';
+    S.shownBpm = null; pushStats();      // 清屏也要同步给设备，否则设备还停在旧数字上
+    ui.fT0.value = 0; ui.fT1.value = 0;
+    clearSummary();
+    setState('待机', 'badc');
+    ui.help.innerHTML = '当前显示已清除；已保存到本机数据库的历史记录不会被删除。';
+    refreshButtons();
+  };
+  // ------------------------------------------------------------------
+  // 离线分析：自选区间内按固定窗口滑窗统计频率
+  // ------------------------------------------------------------------
+  function clearSummary() {
+    ui.sAvg.textContent = '--'; ui.sCount.textContent = '--';
+    ui.sDur.textContent = '--'; ui.sWin.textContent = '--';
+  }
+
+  function fillRangeInputs() {
+    if (!S.session || !Number.isFinite(S.session.first_timeline_ms) || !Number.isFinite(S.session.last_timeline_ms)) return;
+    const t0 = S.session.first_timeline_ms, t1 = S.session.last_timeline_ms;
+    ui.fT0.value = 0;
+    ui.fT1.value = Math.round((t1 - t0) / 1000);
+  }
+
+  ui.btnFull.onclick = () => { if (!S.busy) { fillRangeInputs(); analyze().catch(console.error); } };
+  ui.btnAnalyze.onclick = () => { if (!S.busy) analyze().catch(console.error); };
+
+  function makeOfflineDetector(config) {
+    let ma = [], maSum = 0, cal = [], calStart = null, baseline = 0, thDown = 0, thUp = 0;
+    let ready = false, inBlink = false, falling = 0, fallingUtc = 0, minimum = 0, refractoryUntil = 0, previousSegment = null;
+    const push = v => { ma.push(v); maSum += v; if (ma.length > config.maLength) maSum -= ma.shift(); return maSum / ma.length; };
+    return row => {
+      const [t, utcMs,, raw,, segment] = row;
+      if (previousSegment !== null && segment !== previousSegment) {
+        ma = []; maSum = 0; inBlink = false; refractoryUntil = t + config.refractoryMs;
+        if (!ready) { cal = []; calStart = null; }
+      }
+      previousSegment = segment;
+      const filt = push(raw);
+      if (calStart === null) calStart = t;
+      if (!ready) {
+        cal.push(filt);
+        if (t - calStart < config.calibrationMs) return null;
+        const base = median(cal), mad = median(cal.map(v => Math.abs(v - base)));
+        const drop = config.manualThresholdEnabled
+          ? Math.max(config.minDropCounts, config.manualDropCounts)
+          : Math.max(config.minDropCounts, Math.max(1, 1.4826 * mad) * config.noiseMultiplier);
+        baseline = base; thDown = base - drop; thUp = base - drop * config.releaseRatio; ready = true;
+        return null;
+      }
+      if (!inBlink) {
+        if (filt < thDown && t >= refractoryUntil) { inBlink = true; falling = t; fallingUtc = utcMs; minimum = filt; }
+        const drop = baseline - thDown;
+        baseline += config.baselineAlpha * (filt - baseline);
+        thDown = baseline - drop; thUp = baseline - drop * config.releaseRatio;
+        return null;
+      }
+      minimum = Math.min(minimum, filt);
+      const width = t - falling;
+      if (filt > thUp || width > config.maxWidthMs) {
+        inBlink = false; refractoryUntil = t + config.refractoryMs;
+        if (width >= config.minWidthMs && width <= config.maxWidthMs) return { t: falling, utcMs: fallingUtc, width, amp: Math.round(baseline - minimum) };
+      }
+      return null;
+    };
+  }
+
+  async function analyze() {
+    const canvas = $('freq');
+    const ctx = canvas.getContext('2d');
+    const wrap = $('freqWrap');
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    canvas.width = Math.round(wrap.clientWidth * dpr);
+    canvas.height = Math.round(wrap.clientHeight * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const W = wrap.clientWidth, H = wrap.clientHeight;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#050b13'; ctx.fillRect(0, 0, W, H);
+
+    if (!S.session || !Number.isFinite(S.session.first_timeline_ms)) { clearSummary(); return; }
+
+    await waitForWrites();
+    const t0rec = S.session.first_timeline_ms, t1rec = S.session.last_timeline_ms;
+    const totalSec = (t1rec - t0rec) / 1000;
+    let a = Number(ui.fT0.value) || 0;
+    let b = Number(ui.fT1.value) || Math.round(totalSec);
+    a = clamp(a, 0, totalSec); b = clamp(b, 0, totalSec);
+    if (b <= a) { clearSummary(); ui.help.textContent = '查看区间的结束时间必须大于开始时间。'; return; }
+
+    const winMs = clamp((Number(ui.fWin.value) || 30) * 1000, 5000, 600000);
+    const stepMs = clamp((Number(ui.fStep.value) || 5) * 1000, 1000, 600000);
+
+    const detector = makeOfflineDetector(S.session.config);
+    const allEvents = [];
+    await visitChunks(S.session.id, chunk => {
+      for (const row of chunk.rows) { const event = detector(row); if (event) allEvents.push(event); }
+    });
+    const from = t0rec + a * 1000, to = t0rec + b * 1000;
+    const ev = allEvents.filter(e => e.t >= from && e.t <= to);
+    const span = to - from;
+
+    // 滑窗
+    const series = [];
+    if (span <= winMs) {
+      const activeMs = activeDurationMs(S.session, from, to);
+      series.push({ t: from + span / 2, bpm: activeMs >= 1000 ? ev.length / (activeMs / 1000) * 60 : null, n: ev.length });
+    } else {
+      for (let w = from; w + winMs <= to + 1; w += stepMs) {
+        const n = ev.filter(e => e.t >= w && e.t < w + winMs).length;
+        const activeMs = activeDurationMs(S.session, w, w + winMs);
+        series.push({ t: w + winMs / 2, bpm: activeMs >= 1000 ? n / (activeMs / 1000) * 60 : null, n });
+      }
+    }
+
+    // 坐标
+    const padL = 42, padR = 10, padT = 14, padB = 22;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+    const maxBpm = Math.max(20, ...series.map(s => Number.isFinite(s.bpm) ? s.bpm : 0));
+    const x = t => padL + (span <= 0 ? 0 : (t - from) / span) * plotW;
+    const y = v => padT + plotH - (v / maxBpm) * plotH;
+
+    // 网格
+    ctx.strokeStyle = '#18304a'; ctx.lineWidth = 1;
+    ctx.font = '10px ui-monospace'; ctx.fillStyle = '#8ea3bd';
+    for (let i = 0; i <= 4; i++) {
+      const v = maxBpm * i / 4, yy = y(v);
+      ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(padL + plotW, yy); ctx.stroke();
+      ctx.fillText(v.toFixed(0), 6, yy + 3);
+    }
+    ctx.fillText('次/分', 6, 10);
+    ctx.fillText(`0s`, padL, H - 6);
+    ctx.fillText(`${(span / 1000).toFixed(0)}s`, padL + plotW - 30, H - 6);
+
+    // 曲线
+    if (series.length) {
+      ctx.strokeStyle = '#38d996'; ctx.lineWidth = 2;
+      ctx.beginPath();
+      let pathOpen = false;
+      series.forEach((s, i) => {
+        if (!Number.isFinite(s.bpm)) { pathOpen = false; return; }
+        const px = x(s.t), py = y(s.bpm);
+        pathOpen ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+        pathOpen = true;
+      });
+      ctx.stroke();
+      ctx.fillStyle = '#38d996';
+      series.filter(s => Number.isFinite(s.bpm)).forEach(s => { ctx.beginPath(); ctx.arc(x(s.t), y(s.bpm), 2.2, 0, Math.PI * 2); ctx.fill(); });
+    }
+
+    const activeMs = activeDurationMs(S.session, from, to);
+    const avg = activeMs >= 1000 ? ev.length / (activeMs / 1000) * 60 : null;
+    ui.sAvg.textContent = avg === null ? '--' : `${avg.toFixed(1)} 次/分`;
+    ui.sCount.textContent = `${ev.length} 次`;
+    ui.sDur.textContent = `${(activeMs / 1000).toFixed(1)} 秒有效采集`;
+    ui.sWin.textContent = `${series.length} 个`;
+  }
+
+  // ------------------------------------------------------------------
+  // 导出与本机历史记录
+  // ------------------------------------------------------------------
+  async function exportBundle() {
+    if (!S.session || S.busy) return;
+    if (S.phase === 'RUN' || S.phase === 'CAL' || S.phase === 'PAUSE') throw new Error('请先结束测试。');
+    const sessionId = S.session.id;
+    S.busy = true; refreshButtons();
+    try {
+      await waitForWrites();
+      if (!S.session || S.session.id !== sessionId) throw new Error('记录已切换，已取消导出。');
+      const sessionSnapshot = JSON.parse(JSON.stringify(S.session));
+      if (sessionSnapshot.storage_error || sessionSnapshot.status === 'recording') throw new Error('这条记录未正常结束或保存不完整，请重新测试。');
+      const sessionQuality = sessionSnapshot.quality || {};
+      if (sessionSnapshot.status === 'calibration_invalid' || sessionQuality.calibration_valid === false ||
+          (sessionSnapshot.schema === 'blink-collector/v1' &&
+           (!Number.isFinite(sessionQuality.calibration_samples) ||
+            sessionQuality.calibration_samples < Math.ceil(CFG.sampleRateHz * CFG.calibrationMs / 1000)))) {
+        throw new Error('这条记录没有完成有效准备阶段，请重新测试。');
+      }
+      const sampleChunks = [];
+      await visitChunks(sessionId, chunk => sampleChunks.push(chunk));
+      const storedCount = sampleChunks.reduce((n, c) => n + c.rows.length, 0);
+      const expectedCount = sessionSnapshot.quality && sessionSnapshot.quality.received;
+      if (Number.isFinite(expectedCount) && storedCount !== expectedCount) throw new Error('保存的样本数量不完整，请重新测试。');
+      const exportedUtcMs = Date.now();
+      const bundle = {
+      schema: 'blink-export/v1',
+      exported_utc_ms: exportedUtcMs,
+      exported_utc_iso: iso(exportedUtcMs),
+      metadata: sessionSnapshot,
+      event_columns: ['sessionId', 'id', 'type', 'timeline_ms', 'utc_ms', 'phone_utc_iso', 'width_ms', 'amplitude_counts', 'algorithm', 'note'],
+      events: (await readEvents(sessionId)).sort((a, b) => a.id - b.id),
+      sample_columns: ['phone_timeline_ms', 'sample_utc_ms', 'phone_received_utc_ms', 'adc_raw', 'adc_filtered', 'segment_id', 'flags'],
+      sample_chunks: sampleChunks
+      };
+      saveBlob(`blink-${sessionId}.json`, 'application/json;charset=utf-8', [JSON.stringify(bundle)]);
+    } finally { S.busy = false; refreshButtons(); }
+  }
+
+  async function refreshSessionList() {
+    try {
+      const db = await openDb();
+      const sessions = await new Promise((resolve, reject) => {
+        const request = db.transaction('sessions', 'readonly').objectStore('sessions').getAll();
+        request.onsuccess = () => resolve(request.result || []); request.onerror = () => reject(request.error);
+      });
+      const selected = S.session ? S.session.id : ui.sessionList.value;
+      ui.sessionList.textContent = '';
+      sessions.sort((a, b) => b.created_utc_ms - a.created_utc_ms).forEach(s => {
+        const option = document.createElement('option'); option.value = s.id;
+        option.textContent = `${s.participant_id || '未命名'} · ${iso(s.created_utc_ms).replace('T', ' ').slice(0, 19)}`;
+        if (s.id === selected) option.selected = true;
+        ui.sessionList.append(option);
+      });
+    } catch (err) { console.warn(err); }
+  }
+
+  async function loadSelectedSession() {
+    if (S.busy || ['CAL', 'RUN', 'PAUSE'].includes(S.phase)) return;
+    const id = ui.sessionList.value;
+    if (!id || (S.session && id === S.session.id)) return;
+    S.busy = true; refreshButtons();
+    try {
+      const db = await openDb();
+      const session = await new Promise((resolve, reject) => {
+        const request = db.transaction('sessions', 'readonly').objectStore('sessions').get(id);
+        request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+      });
+      if (!session || ui.sessionList.value !== id) return;
+      await S.writeChain;
+      S.session = session; S.phase = 'STOPPED'; S.viewingHistory = true; S.samples = []; S.events = []; S.currentChunk = null;
+      S.timeoutHandling = false; S.recordingStartedAt = 0; S.lastSampleAt = 0;
+      S.baseline = 0; S.mad = 0; S.noise = 1; S.dropCounts = 0; S.thDown = 0; S.thUp = 0;
+      S.writeError = session.storage_error || null;
+      const historyEvents = await readEvents(id);
+      S.events = historyEvents.filter(e => e.type === 'blink').map(e => ({ t: e.timeline_ms, amp: e.amplitude_counts, width: e.width_ms }));
+      setBlinkCount(S.events.length);
+      await visitChunks(id, chunk => {
+        for (const row of chunk.rows) S.samples.push({ t: row[0], raw: row[3], filt: row[4] });
+        S.samples = S.samples.slice(-4000);
+      });
+      S.lastT = session.last_timeline_ms || 0;
+      ui.mBpm.textContent = '--'; ui.mLast.textContent = '--'; S.shownBpm = null;
+      S.quality = { ...S.quality, ...(session.quality || {}) };
+      ui.subjectId.value = session.participant_id || ''; ui.deviceId.value = session.device_id || '';
+      ui.operatorId.value = session.operator_id || ''; ui.condition.value = session.condition || '';
+      ui.fMult.value = session.config.noiseMultiplier; ui.fRefr.value = session.config.refractoryMs;
+      ui.manualThresholdEnabled.checked = !!session.config.manualThresholdEnabled;
+      ui.manualDrop.value = session.config.manualDropCounts || 60;
+      lockSessionInputs(false); updateDebugControls(); fillRangeInputs(); setState('已载入', 'bluec'); await analyze();
+    } catch (err) { console.error(err); alert(`载入失败：${err.message || err}`); }
+    finally { S.busy = false; refreshButtons(); }
+  }
+
+  ui.btnExportBundle.onclick = () => { exportBundle().catch(err => { console.error(err); alert(`导出失败：${err.message || err}`); }); };
+  ui.btnLoad.onclick = () => { loadSelectedSession().catch(console.error); };
+
+  // ------------------------------------------------------------------
+  // 绘制
+  // ------------------------------------------------------------------
+  const scope = $('scope'), sctx = scope.getContext('2d');
+  function resizeScope() {
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const r = scope.getBoundingClientRect();
+    scope.width = Math.round(r.width * dpr);
+    scope.height = Math.round(r.height * dpr);
+    sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener('resize', () => { resizeScope(); analyze(); });
+
+  function draw() {
+    requestAnimationFrame(draw);
+    const r = scope.getBoundingClientRect(), W = r.width, H = r.height;
+    sctx.clearRect(0, 0, W, H);
+    sctx.fillStyle = '#050b13'; sctx.fillRect(0, 0, W, H);
+
+    sctx.strokeStyle = '#18304a'; sctx.lineWidth = 1;
+    for (let i = 1; i < 5; i++) {
+      const yy = H * i / 5;
+      sctx.beginPath(); sctx.moveTo(0, yy); sctx.lineTo(W, yy); sctx.stroke();
+    }
+
+    const now = S.lastT || 0;
+    const pts = S.samples.filter(p => p.t >= now - CFG.liveWindowMs && p.t <= now + 1);
+    if (pts.length < 2) return;
+
+    const t0 = now - CFG.liveWindowMs, t1 = now;
+    const x = t => clamp((t - t0) / (t1 - t0), 0, 1) * W;
+    const y = v => H - clamp(v / CFG.adcMax, 0, 1) * H;
+
+    const trace = (key, color, width, alpha) => {
+      sctx.globalAlpha = alpha; sctx.strokeStyle = color; sctx.lineWidth = width;
+      sctx.beginPath();
+      pts.forEach((p, i) => {
+        const px = x(p.t), py = y(p[key]);
+        if (!i || p.t - pts[i - 1].t > 12) sctx.moveTo(px, py); else sctx.lineTo(px, py);
+      });
+      sctx.stroke(); sctx.globalAlpha = 1;
+    };
+    trace('raw', '#70829a', 1, 0.45);
+    trace('filt', '#38d996', 1.8, 1);
+
+    if (S.baseline > 0) {
+      [[S.thDown, '#ff6679'], [S.thUp, '#6ca9ff']].forEach(([v, c]) => {
+        sctx.strokeStyle = c; sctx.setLineDash([6, 4]); sctx.lineWidth = 1;
+        sctx.beginPath(); sctx.moveTo(0, y(v)); sctx.lineTo(W, y(v)); sctx.stroke();
+        sctx.setLineDash([]);
+      });
+    }
+    S.events.filter(e => e.t >= t0 && e.t <= t1).forEach(e => {
+      sctx.strokeStyle = '#f4bf4f'; sctx.lineWidth = 1;
+      sctx.beginPath(); sctx.moveTo(x(e.t), 0); sctx.lineTo(x(e.t), H); sctx.stroke();
+    });
+
+    sctx.fillStyle = '#8ea3bd'; sctx.font = '11px ui-monospace';
+    sctx.fillText(`${(CFG.liveWindowMs / 1000).toFixed(0)} s`, 8, H - 8);
+    sctx.fillText('4095', 8, 13);
+    sctx.fillText('0', 8, H - 22);
+  }
+
+  // ------------------------------------------------------------------
+  // 演示模式：无硬件也能验证整条链路
+  // ------------------------------------------------------------------
+  let demoTimer = null, demoNextBlink = 0;
+  function startDemo() {
+    if (S.connected) return;
+    S.demo = true;
+    S.viewingHistory = false;
+    resetFilter();
+    S.samples = []; S.lastT = 0;
+    setConnText('演示模式：本地生成 200Hz 合成数据，用于验证滤波、判决与频率分析', true);
+    ui.btnConn.textContent = '退出演示';
+    S.phase = 'IDLE';
+    S.rec = { t: [], raw: [], filt: [], ev: [] };
+    S.recStartMs = 0;
+    const t0 = performance.now();
+    demoTimer = setInterval(() => {
+      const now = performance.now();
+      const t = now - t0;
+      // 基线 2048，叠加慢漂移与噪声
+      let v = 2048 + 40 * Math.sin(t / 4000) + (Math.random() - 0.5) * 26;
+      // 每 3.5 秒左右来一次眨眼，凹陷约 320 counts、宽约 150ms
+      if (t > demoNextBlink) {
+        const dt = t - demoNextBlink;
+        if (dt < 150) {
+          const shape = Math.sin(Math.PI * dt / 150);
+          v -= 320 * shape;
+        } else if (dt > 600) {
+          demoNextBlink = t + 3200 + Math.random() * 900;
         }
+      }
+      onSample(t, Math.round(clamp(v, 0, 4095)));
+      if (S.phase === 'RUN' || S.phase === 'CAL') { S.shownBpm = realtimeBpm(t); ui.mBpm.textContent = fmtBpm(S.shownBpm); }
+    }, 5); // 200Hz
+    demoNextBlink = 800;
+    refreshButtons();
+    ui.help.innerHTML = '演示模式：用于确认页面显示和保存功能，不用于正式测试。';
+  }
+  async function stopDemo() {
+    if (S.session && (S.phase === 'RUN' || S.phase === 'CAL' || S.phase === 'PAUSE')) await stopSession('demo_finished');
+    clearInterval(demoTimer); demoTimer = null;
+    S.demo = false;
+    ui.btnConn.textContent = '连接设备';
+    setConnText('已退出演示模式');
+    S.phase = 'STOPPED';
+    refreshButtons();
+  }
+  ui.btnDemo.onclick = () => { if (S.demo) stopDemo(); else startDemo(); };
 
-        const canvas = document.getElementById('oscilloscope'), ctx = canvas.getContext('2d');
-        function resizeCanvas() {
-            const dpr = Math.max(1, window.devicePixelRatio || 1);
-            const rect = canvas.parentElement.getBoundingClientRect();
-            const logicalWidth = Math.max(1, Math.floor(rect.width));
-            const logicalHeight = Math.max(1, Math.floor(rect.height));
-            const pixelWidth = Math.floor(logicalWidth * dpr);
-            const pixelHeight = Math.floor(logicalHeight * dpr);
+  const fmtBpm = v => (v === null ? '--' : `${v} 次/分`);
 
-            if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
-                canvas.width = pixelWidth;
-                canvas.height = pixelHeight;
-            }
-            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-            canvas.logicalWidth = logicalWidth;
-            canvas.logicalHeight = logicalHeight;
-        }
-        window.addEventListener('resize', resizeCanvas);
-        resizeCanvas();
+  // 实时频率刷新
+  // 这个 500ms tick 是「网页当前频率」的唯一计算点：先更新屏幕，
+  // 再把同一个值下发给设备，保证两边显示的是同一个数。
+  setInterval(() => {
+    const active = S.phase === 'CAL' || S.phase === 'RUN';
+    if (active && !S.busy && !S.timeoutHandling && S.recordingStartedAt) {
+      const lastActivity = S.lastSampleAt || S.recordingStartedAt;
+      if (performance.now() - lastActivity > CFG.sampleTimeoutMs) {
+        S.timeoutHandling = true;
+        S.quality.dataTimeouts = (S.quality.dataTimeouts || 0) + 1;
+        S.quality.discontinuities = (S.quality.discontinuities || 0) + 1;
+        stopSession('data_timeout').catch(err => {
+          console.error(err);
+          ui.help.textContent = '采集数据已停止，但保存状态异常，请重新测试。';
+        }).finally(() => { S.timeoutHandling = false; });
+      }
+    }
+    if (active && !S.busy && S.session && Number.isFinite(S.session.first_timeline_ms) &&
+        S.lastT - S.session.first_timeline_ms >= CFG.maxRecordMs) {
+      stopSession('max_duration').catch(console.error);
+    }
+    if (S.phase === 'RUN' || S.phase === 'PAUSE') {
+      S.shownBpm = realtimeBpm(S.lastT);
+      ui.mBpm.textContent = fmtBpm(S.shownBpm);
+    }
+    pushStats();
+  }, 500);
 
-        function updateSettings() { globalConfig.scaleX = parseFloat(document.getElementById('scaleX').value) || 3; }
-        
-        function formatDateToBeijingStr(dateObj) {
-            const hrs = String(dateObj.getHours()).padStart(2, '0');
-            const mins = String(dateObj.getMinutes()).padStart(2, '0');
-            const secs = String(dateObj.getSeconds()).padStart(2, '0');
-            const ms = String(dateObj.getMilliseconds()).padStart(3, '0');
-            return `${hrs}:${mins}:${secs}.${ms}`;
-        }
-
-        function formatTimeShort(dateObj) {
-            const hrs = String(dateObj.getHours()).padStart(2, '0');
-            const mins = String(dateObj.getMinutes()).padStart(2, '0');
-            const secs = String(dateObj.getSeconds()).padStart(2, '0');
-            return `${hrs}:${mins}:${secs}`;
-        }
-
-        function exportToCSV() {
-            if (dataBuffer.length === 0) {
-                alert("NO DATA");
-                return;
-            }
-            
-            let csvLines = ["time,voltage"];
-            let baseTimestamp = dataBuffer[0].rawTimestamp; 
-            
-            dataBuffer.forEach((item, index) => {
-                let interpolatedMs = baseTimestamp + (index * 10); 
-                let interpolatedDate = new Date(interpolatedMs);
-                let smoothTimeStr = formatDateToBeijingStr(interpolatedDate);
-                csvLines.push(`${smoothTimeStr},${item.voltage.toFixed(3)}`);
-            });
-            
-            const csvBlob = new Blob([csvLines.join("\n")], { type: "text/csv;charset=utf-8;" });
-            const blobUrl = URL.createObjectURL(csvBlob);
-            
-            const link = document.createElement("a");
-            link.setAttribute("href", blobUrl);
-            const fileTime = new Date().toISOString().slice(0,10);
-            link.setAttribute("download", `All_Blink_WaveData_${fileTime}.csv`);
-            document.body.appendChild(link);
-            
-            link.click();
-            document.body.removeChild(link);
-            setTimeout(() => URL.revokeObjectURL(blobUrl), 100);
-        }
-
-        function handleIncomingData(chunk) {
-            if (isPaused) return;
-            incomingBuffer += chunk;
-            if (incomingBuffer.length > 8000) { incomingBuffer = ""; return; }
-            let parts = incomingBuffer.split('\n'); incomingBuffer = parts.pop(); 
-            
-            parts.forEach(part => {
-                const tokens = part.trim().split(',');
-                
-                if (tokens.length === 5 && tokens[0] === "D") {
-                    const adcRawVal = parseInt(tokens[1]); 
-                    const blinkCount = parseInt(tokens[2]);
-                    const bpmValue = parseInt(tokens[3]);
-                    const statusId = parseInt(tokens[4]);
-
-                    if (!isNaN(adcRawVal)) {
-                        if (blinkCount < lastReceivedBlinkCount || (statusId === 0 && (lastReceivedStatusId === 1 || lastReceivedStatusId === 2))) {
-                            console.log("RESET");
-                            dataBuffer = [];
-                            resetMeanFilter();
-                        }
-                        
-                        lastReceivedBlinkCount = blinkCount;
-                        lastReceivedStatusId = statusId;
-
-                        const filteredAdcVal = applyMeanFilter(adcRawVal);
-                        const currentVoltage = (filteredAdcVal / globalConfig.adcMax) * globalConfig.sysVoltage;
-                        const nowObj = new Date();
-
-                        document.getElementById('valVoltage').innerText = currentVoltage.toFixed(2) + " V";
-                        document.getElementById('valAdc').innerText = Math.round(filteredAdcVal);
-                        dataBuffer.push({
-                            val: filteredAdcVal,
-                            rawVal: adcRawVal,
-                            rawTimestamp: nowObj.getTime(),
-                            voltage: currentVoltage,
-                            statusId: statusId 
-                        });
-                        if (dataBuffer.length > MAX_HISTORY_POINTS) dataBuffer.shift();
-
-                        document.getElementById('blinkCount').innerText = blinkCount + " TIMES";
-                        
-                        const rateUI = document.getElementById('blinkRate'), diagUI = document.getElementById('diagnosisResult');
-                        if (statusId === 0) {
-                            rateUI.innerText = "ALIGNING..."; rateUI.className = "text-xs text-slate-400 font-mono";
-                            diagUI.innerText = "WAITING"; diagUI.className = "text-xs font-bold text-slate-500";
-                        } else {
-                            rateUI.innerText = `${bpmValue} BPM`; rateUI.className = "text-sm md:text-lg font-bold text-blue-400 font-mono";
-                            if (statusId === 2) { 
-                                diagUI.innerText = "DRY EYE"; diagUI.className = "text-xs md:text-sm font-bold text-red-500"; 
-                            } else { 
-                                diagUI.innerText = "NORMAL"; diagUI.className = "text-xs md:text-sm font-bold text-emerald-400"; 
-                            }
-                        }
-                    }
-                }
-            });
-        }
-
-        function draw() {
-            requestAnimationFrame(draw); const w = canvas.logicalWidth, h = canvas.logicalHeight;
-            ctx.fillStyle = CANVAS_BG; ctx.fillRect(0, 0, w, h);
-            
-            const maxP = Math.floor(w / (globalConfig.scaleX * 0.15));
-            const viewData = dataBuffer.slice(-maxP);
-            
-            drawGridWithTime(w, h, viewData);
-            
-            if (viewData.length === 0) return;
-            
-            ctx.beginPath(); ctx.strokeStyle = LINE_COLOR; ctx.lineWidth = 2.5;
-            const step = w / (viewData.length - 1 || 1);
-            for (let i = 0; i < viewData.length; i++) {
-                const x = i * step, y = h * (1 - (viewData[i].val / globalConfig.adcMax)) * 0.9 + (h * 0.05);
-                if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-            }
-            ctx.stroke();
-        }
-
-        function drawGridWithTime(w, h, viewData) {
-            ctx.lineWidth = 1;
-            for (let i = 1; i <= 3; i++) {
-                const y = h * (i / 4);
-                ctx.strokeStyle = GRID_COLOR; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
-            }
-            
-            const gridDivisions = 4;
-            for (let i = 0; i <= gridDivisions; i++) {
-                const x = w * (i / gridDivisions);
-                ctx.strokeStyle = GRID_COLOR; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
-                
-                if (viewData.length > 0) {
-                    let dataIdx = Math.floor((viewData.length - 1) * (i / gridDivisions));
-                    if (dataIdx >= 0 && dataIdx < viewData.length) {
-                        let pointDate = new Date(viewData[dataIdx].rawTimestamp);
-                        let timeLabel = formatTimeShort(pointDate);
-                        
-                        ctx.fillStyle = '#64748b'; ctx.font = '10px JetBrains Mono';
-                        if (i === 0) ctx.fillText(timeLabel, x + 4, h - 6);
-                        else if (i === gridDivisions) ctx.fillText(timeLabel, x - 54, h - 6);
-                        else ctx.fillText(timeLabel, x - 25, h - 6);
-                    }
-                }
-            }
-        }
-
-        async function toggleBluetooth() { if (isConnected && bleDevice?.gatt.connected) bleDevice.gatt.disconnect(); else connectBluetooth(); }
-        async function connectBluetooth() {
-            if (!navigator.bluetooth) return alert("Web Bluetooth is not supported in this environment. Please use Chrome or Edge browser.");
-            try {
-                bleDevice = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [0xffe0] });
-                bleDevice.addEventListener('gattserverdisconnected', () => { isConnected = false; updateStatusUI('disconnected'); });
-                const server = await bleDevice.gatt.connect(), service = await server.getPrimaryService(0xffe0);
-                bleCharacteristic = await service.getCharacteristic(0xffe2); 
-                await bleCharacteristic.startNotifications();
-                bleCharacteristic.addEventListener('characteristicvaluechanged', (e) => handleIncomingData(textDecoder.decode(e.target.value)));
-                isConnected = true; updateStatusUI('ble');
-                dataBuffer = [];
-                resetMeanFilter();
-            } catch (err) { console.error(err); isConnected = false; }
-        }
-        function togglePauseMode() { isPaused = document.getElementById('pauseToggle').checked; document.getElementById('pauseOverlay').classList.toggle('hidden', !isPaused); }
-        function updateStatusUI(status) {
-            const dot = document.getElementById('statusDot'), text = document.getElementById('statusText'), btn = document.getElementById('btnBle');
-            if (status === 'ble') { dot.className = 'status-dot status-ble'; text.innerText = 'SYNCING'; btn.innerText = "DISCONNECT"; } 
-            else { dot.className = 'status-dot status-disconnected'; text.innerText = 'OFFLINE'; btn.innerText = "CONNECT"; }
-        }
-        draw();
-    </script>
+  // 演示模式下 recStartMs 用的是 performance.now 的时间基，实时频率单独处理
+  resizeScope(); draw(); refreshButtons(); clearSummary(); refreshSessionList();
+  window.__blink = { S, CFG, onSample, startDemo, analyze, beginFormalSession, exportBundle };
+})();
+</script>
 </body>
 </html>
