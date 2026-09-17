@@ -44,11 +44,12 @@
   .controls button{flex:1 1 118px}
   .note{color:var(--muted);font-size:11.5px;line-height:1.6;margin:9px 0 0}
   .note b{color:var(--text)}
-  .fields{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:9px}
-  .field{background:#091525;border:1px solid var(--line);border-radius:8px;padding:8px}
+  .fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:9px}
+  .field{background:#091525;border:1px solid var(--line);border-radius:8px;padding:8px;min-width:0}
   .field label{display:block;color:var(--muted);font-size:11px;margin-bottom:4px}
-  .field input,.field select{width:100%;background:#0e1b2d;border:1px solid #2a3f5c;color:var(--text);
+  .field input,.field select,.field textarea{width:100%;background:#0e1b2d;border:1px solid #2a3f5c;color:var(--text);
           border-radius:6px;padding:6px;font:inherit;font-size:13px}
+  .field textarea{min-height:58px;resize:vertical;line-height:1.35}
   #freqWrap{height:200px;position:relative;border:1px solid var(--line);border-radius:8px;background:#050b13;overflow:hidden}
   #freqWrap canvas{width:100%;height:100%;display:block}
   .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:9px;color:var(--muted);font-size:11.5px}
@@ -58,10 +59,14 @@
   .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
   .hidden{display:none !important}
   .field input[type="checkbox"]{width:auto;vertical-align:middle;margin:0 6px 0 0}
+  /* 手机端：统计卡片保留两列，录入项统一单列，避免同一组表单忽两列忽一列。 */
+  @media (max-width:860px){
+    .fields{grid-template-columns:repeat(2,minmax(0,1fr))}
+  }
   @media (max-width:620px){
     .grid{grid-template-columns:repeat(2,1fr)}
     .summary{grid-template-columns:repeat(2,1fr)}
-    .fields{grid-template-columns:1fr 1fr}
+    .fields{grid-template-columns:1fr}
     .scope{height:250px}
   }
 </style>
@@ -134,11 +139,17 @@
       <div class="field"><label>说明</label><span class="tiny">数值越大越不容易把纹波当作眨眼。</span></div>
     </div>
     <div class="fields">
-      <div class="field"><label>设备屏幕文字</label><input id="oledText" type="text" maxlength="8" value="眨眼采集"></div>
+      <div class="field"><label>设备屏幕下两行文字</label><textarea id="oledText" rows="2" maxlength="16">眨眼采集</textarea></div>
       <div class="field"><label>屏幕文字</label><button id="btnOledSend" class="ghost" type="button">发送到设备</button></div>
-      <div class="field"><label>说明</label><span class="tiny">一行中文使用第 1、2 物理行显示。</span></div>
+      <div class="field"><label>说明</label><span class="tiny">第 1、2 行显示眨眼次数和频率；这里的文字显示在第 3、4 行，按屏幕宽度自动换行，也可以按回车强制换行。</span></div>
     </div>
-    <p class="tiny">最多 8 个汉字；文字由手机渲染后传给 OLED。连接设备后可随时重新发送。</p>
+    <p class="tiny">最多输入 16 个字符，每行最多 8 个字，实际显示为 OLED 下两行；文字由手机渲染后传给设备。连接设备后可随时重新发送。</p>
+    <div class="fields">
+      <div class="field"><label>固件升级文件（OTA）</label><input id="otaFile" type="file" accept=".hex,.ihex,text/plain"></div>
+      <div class="field"><label>升级操作</label><button id="btnOta" class="warn" type="button">上传 HEX 并升级</button></div>
+      <div class="field"><label>说明</label><span class="tiny">仅选择已链接到 0x08002000 的应用 HEX；升级时会暂停采集。</span></div>
+    </div>
+    <p id="otaStatus" class="tiny">OTA 默认只在调试台中使用。首次启用前必须先刷入带 Bootloader 的完整固件。</p>
     <p id="debugReadout" class="note">默认使用自动抗干扰设置。手动阈值仅建议在调试时使用。</p>
     <div class="row"><button id="btnDebugClose" class="ghost">关闭调试台</button></div>
   </section>
@@ -206,6 +217,7 @@
     btnFull: $('btnFull'), btnDemo: $('btnDemo'), btnLoad: $('btnLoad'), btnExportBundle: $('btnExportBundle'),
     appTitle: $('appTitle'), debugPanel: $('debugPanel'), debugEnabled: $('debugEnabled'), btnDebugClose: $('btnDebugClose'),
     oledText: $('oledText'), btnOledSend: $('btnOledSend'),
+    otaFile: $('otaFile'), btnOta: $('btnOta'), otaStatus: $('otaStatus'),
     dot: $('dot'), conn: $('conn'), help: $('help'),
     mState: $('mState'), mCount: $('mCount'), mBpm: $('mBpm'), mLast: $('mLast'),
     fT0: $('fT0'), fT1: $('fT1'), fWin: $('fWin'), fStep: $('fStep'), fMult: $('fMult'), fRefr: $('fRefr'),
@@ -251,7 +263,8 @@
     db: null, activeSegment: null, nextEventId: 1,
     quality: { received: 0, saturatedLow: 0, saturatedHigh: 0 },
     clock: { anchorTimeline: null, anchorUtc: null, lastWallOffset: null },
-    demoBlinks: []
+    demoBlinks: [],
+    ota: { running: false, waiter: null }
   };
 
   // ------------------------------------------------------------------
@@ -395,7 +408,9 @@
     ui.btnFull.disabled = !hasSession;
     ui.btnLoad.disabled = running || paused || cal || S.busy;
     ui.btnOledSend.disabled = !S.connected || !S.writeFn || S.busy;
-    if (S.busy) [ui.btnConn, ui.btnStart, ui.btnStop, ui.btnClear, ui.btnExportBundle, ui.btnPause, ui.btnAnalyze, ui.btnFull, ui.btnLoad, ui.btnOledSend].forEach(b => { b.disabled = true; });
+    ui.btnOta.disabled = !S.connected || !S.writeFn || S.demo || running || paused || cal || S.busy ||
+      S.ota.running || !ui.otaFile.files || !ui.otaFile.files.length;
+    if (S.busy) [ui.btnConn, ui.btnStart, ui.btnStop, ui.btnClear, ui.btnExportBundle, ui.btnPause, ui.btnAnalyze, ui.btnFull, ui.btnLoad, ui.btnOledSend, ui.btnOta].forEach(b => { b.disabled = true; });
   }
 
   // ------------------------------------------------------------------
@@ -462,8 +477,11 @@
   const savedOledText = (() => {
     try { return JSON.parse(localStorage.getItem(OLED_TEXT_STORAGE_KEY) || '{}'); } catch (_) { return {}; }
   })();
-  if (typeof savedOledText.text === 'string') ui.oledText.value = savedOledText.text.slice(0, 8);
+  if (typeof savedOledText.text === 'string') ui.oledText.value = Array.from(savedOledText.text).slice(0, 16).join('');
   const saveOledText = () => {
+    if (Array.from(ui.oledText.value).length > 16) {
+      ui.oledText.value = Array.from(ui.oledText.value).slice(0, 16).join('');
+    }
     try { localStorage.setItem(OLED_TEXT_STORAGE_KEY, JSON.stringify({ text: ui.oledText.value })); } catch (_) {}
   };
   ui.oledText.oninput = saveOledText;
@@ -832,6 +850,7 @@
   function parseLine(line) {
     const s = line.trim();
     if (!s) return;
+    if (consumeOtaReply(s)) return;
     const p = s.split(',');
     if (p[0] === 'B') {
       if (S.session && (S.phase === 'RUN' || S.phase === 'PAUSE' || S.phase === 'CAL')) {
@@ -915,27 +934,59 @@
     queueBleText(`N,${S.count},${bpm}\n`);
   }
 
-  // 将手机上的一行中文绘制成 OLED SSD1306 的 128×16 位图。
-  // 一行中文使用 OLED 的物理第 1、2 行，共 2 页、256 字节；
-  // STM32 不需要中文字库，网页使用手机已有的中文字体渲染。
+  // 将手机上的两行文字绘制成 OLED SSD1306 的 128×32 位图。
+  // 自定义文字使用 OLED 的物理第 3、4 行，共 4 页、512 字节；
+  // 第 1、2 行留给固件显示统计。STM32 不需要中文字库，网页使用手机已有的字体渲染。
   function renderOledText(text) {
     const canvas = document.createElement('canvas');
-    canvas.width = 128; canvas.height = 16;
+    canvas.width = 128; canvas.height = 32;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 128, 16);
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 128, 32);
     ctx.fillStyle = '#fff';
     ctx.font = '16px "PingFang SC", "Hiragino Sans GB", sans-serif';
     ctx.textBaseline = 'top';
-    ctx.fillText(String(text || '').slice(0, 8), 0, 0);
+    const lines = [[]];
+    const normalized = String(text || '').replace(/\r\n?/g, '\n');
+    for (const ch of Array.from(normalized)) {
+      if (ch === '\n') {
+        if (lines.length < 2) lines.push([]);
+        continue;
+      }
+      let line = lines[lines.length - 1];
+      if (line.length >= 8) {
+        if (lines.length >= 2) break;
+        lines.push([]);
+        line = lines[lines.length - 1];
+      }
+      line.push(ch);
+    }
+    while (lines.length < 2) lines.push([]);
 
-    const pixels = ctx.getImageData(0, 0, 128, 16).data;
-    const bitmap = new Uint8Array(128 * 2);
-    for (let page = 0; page < 2; page++) {
+    // OLED 每行是 128 像素，按 16×16 字格绘制：每行严格 8 格。
+    // 这样不依赖手机当前字体的实际宽度，中文不会挤成 5 个字，
+    // 第二行也一定会参与位图生成；超宽回退字形会缩放到格内。
+    for (let row = 0; row < 2; row++) {
+      const line = Array.isArray(lines[row]) ? lines[row] : [];
+      for (let col = 0; col < line.length && col < 8; col++) {
+        const ch = line[col];
+        const x = col * 16, y = row * 16;
+        const width = Math.max(1, ctx.measureText(ch).width);
+        const scale = Math.min(1, 16 / width);
+        ctx.save();
+        ctx.beginPath(); ctx.rect(x, y, 16, 16); ctx.clip();
+        ctx.translate(x, y); ctx.scale(scale, scale); ctx.fillText(ch, 0, 0);
+        ctx.restore();
+      }
+    }
+
+    const pixels = ctx.getImageData(0, 0, 128, 32).data;
+    const bitmap = new Uint8Array(128 * 4);
+    for (let page = 0; page < 4; page++) {
       for (let x = 0; x < 128; x++) {
         let value = 0;
         for (let bit = 0; bit < 8; bit++) {
           const y = page * 8 + bit;
-          if (pixels[(y * 128 + x) * 4] >= 96) value |= 1 << bit;
+          if (y < 32 && pixels[(y * 128 + x) * 4] >= 96) value |= 1 << bit;
         }
         bitmap[page * 128 + x] = value;
       }
@@ -948,6 +999,187 @@
     for (const byte of bytes) out += byte.toString(16).padStart(2, '0').toUpperCase();
     return out;
   }
+
+  // ------------------------------------------------------------------
+  // OTA：Intel HEX 解析、分包与 ACK 重传
+  // ------------------------------------------------------------------
+  // STM32F103C8 按 64KiB 规划：Bootloader 8KiB，应用从 0x08002000 开始，
+  // 应用可用 24KiB。网页只允许上传应用区 HEX，避免误把完整 HEX 覆盖 Bootloader。
+  const OTA_APP_BASE = 0x08002000;
+  const OTA_APP_END = 0x08008000;
+  const OTA_PACKET_BYTES = 32;
+
+  function hexBytes(text, label) {
+    const s = text.trim();
+    if (!s || (s.length & 1) || !/^[0-9a-f]+$/i.test(s)) throw new Error(`${label}不是有效十六进制`);
+    const out = new Uint8Array(s.length / 2);
+    for (let i = 0; i < out.length; i++) out[i] = Number.parseInt(s.slice(i * 2, i * 2 + 2), 16);
+    return out;
+  }
+
+  function parseIntelHex(text) {
+    const image = new Uint8Array(OTA_APP_END - OTA_APP_BASE);
+    image.fill(0xff);
+    let upper = 0;
+    let minAddress = Infinity, maxAddress = -Infinity, eof = false;
+    const lines = String(text).replace(/\r/g, '').split('\n');
+
+    for (let lineNo = 0; lineNo < lines.length; lineNo++) {
+      const line = lines[lineNo].trim();
+      if (!line) continue;
+      if (eof) throw new Error(`HEX 第 ${lineNo + 1} 行出现在结束记录之后`);
+      if (!line.startsWith(':') || ((line.length - 1) & 1)) throw new Error(`HEX 第 ${lineNo + 1} 行格式错误`);
+      const record = hexBytes(line.slice(1), `HEX 第 ${lineNo + 1} 行`);
+      if (record.length < 5 || record.length !== record[0] + 5) throw new Error(`HEX 第 ${lineNo + 1} 行长度错误`);
+      let sum = 0; for (const byte of record) sum = (sum + byte) & 0xff;
+      if (sum !== 0) throw new Error(`HEX 第 ${lineNo + 1} 行校验和错误`);
+
+      const length = record[0];
+      const address = (record[1] << 8) | record[2];
+      const type = record[3];
+      if (type === 0x00) {
+        const absolute = upper + address;
+        if (absolute < OTA_APP_BASE || absolute + length > OTA_APP_END) {
+          throw new Error(`HEX 第 ${lineNo + 1} 行地址超出应用区，请使用从 0x08002000 链接的应用 HEX`);
+        }
+        for (let i = 0; i < length; i++) {
+          const index = absolute - OTA_APP_BASE + i;
+          if (image[index] !== 0xff && image[index] !== record[4 + i]) {
+            throw new Error(`HEX 第 ${lineNo + 1} 行与已有数据冲突`);
+          }
+          image[index] = record[4 + i];
+        }
+        minAddress = Math.min(minAddress, absolute);
+        maxAddress = Math.max(maxAddress, absolute + length);
+      } else if (type === 0x01) {
+        if (length !== 0) throw new Error(`HEX 第 ${lineNo + 1} 行结束记录错误`);
+        eof = true;
+      } else if (type === 0x04) {
+        if (length !== 2) throw new Error(`HEX 第 ${lineNo + 1} 行扩展地址错误`);
+        upper = ((record[4] << 8) | record[5]) << 16;
+      } else if (type === 0x02) {
+        if (length !== 2) throw new Error(`HEX 第 ${lineNo + 1} 行段地址错误`);
+        upper = ((record[4] << 8) | record[5]) << 4;
+      } else if (type === 0x03 || type === 0x05) {
+        // 启动地址记录对 Cortex-M3 的裸机应用没有作用，合法但忽略。
+      } else {
+        throw new Error(`HEX 第 ${lineNo + 1} 行包含不支持的记录类型`);
+      }
+    }
+    if (!eof) throw new Error('HEX 缺少结束记录');
+    if (minAddress !== OTA_APP_BASE || maxAddress <= OTA_APP_BASE) {
+      throw new Error('HEX 不是从 0x08002000 开始的 OTA 应用文件，请在 Keil 中重新生成应用 HEX。');
+    }
+    const size = maxAddress - OTA_APP_BASE;
+    return { image: image.slice(0, size), size, crc32: crc32Bytes(image, size) };
+  }
+
+  function crc32Bytes(bytes, length = bytes.length) {
+    let crc = 0xffffffff;
+    for (let i = 0; i < length; i++) {
+      crc ^= bytes[i];
+      for (let bit = 0; bit < 8; bit++) crc = (crc & 1) ? ((crc >>> 1) ^ 0xedb88320) : (crc >>> 1);
+    }
+    return (~crc) >>> 0;
+  }
+
+  function crc16Ccitt(bytes) {
+    let crc = 0xffff;
+    for (const byte of bytes) {
+      crc ^= byte << 8;
+      for (let bit = 0; bit < 8; bit++) crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
+    }
+    return crc;
+  }
+
+  function rejectOtaWaiter(error) {
+    const waiter = S.ota.waiter;
+    if (!waiter) return;
+    clearTimeout(waiter.timer);
+    S.ota.waiter = null;
+    waiter.reject(error instanceof Error ? error : new Error(String(error)));
+  }
+
+  function consumeOtaReply(line) {
+    if (!line.startsWith('OTA,')) return false;
+    const waiter = S.ota.waiter;
+    if (!waiter) return true;
+    clearTimeout(waiter.timer);
+    S.ota.waiter = null;
+    const parts = line.split(',');
+    if (parts[1] === 'ERR') waiter.reject(new Error(`设备拒绝 OTA：${parts.slice(2).join(',') || '未知错误'}`));
+    else waiter.resolve(parts);
+    return true;
+  }
+
+  function waitOtaReply(timeoutMs = 5000) {
+    return new Promise((resolve, reject) => {
+      if (S.ota.waiter) { reject(new Error('OTA 协议状态异常')); return; }
+      const timer = setTimeout(() => {
+        if (S.ota.waiter && S.ota.waiter.timer === timer) S.ota.waiter = null;
+        reject(new Error('等待设备 OTA 应答超时'));
+      }, timeoutMs);
+      S.ota.waiter = { resolve, reject, timer };
+    });
+  }
+
+  async function sendOtaCommand(command) {
+    if (!S.connected || !S.writeFn) throw new Error('蓝牙已断开');
+    const replyPromise = waitOtaReply();
+    const sent = await queueBleText(`${command}\n`);
+    if (!sent) { rejectOtaWaiter(new Error('蓝牙写入失败')); return replyPromise; }
+    return replyPromise;
+  }
+
+  async function runOta() {
+    if (!S.connected || !S.writeFn) throw new Error('请先连接采集设备');
+    if (S.demo || ['CAL', 'RUN', 'PAUSE'].includes(S.phase)) throw new Error('请先结束当前测试');
+    const file = ui.otaFile.files && ui.otaFile.files[0];
+    if (!file) throw new Error('请先选择应用 HEX 文件');
+
+    S.busy = true; S.ota.running = true; refreshButtons();
+    try {
+      ui.otaStatus.textContent = '正在读取并校验 HEX…';
+      const firmware = parseIntelHex(await file.text());
+      ui.otaStatus.textContent = `文件有效：${firmware.size} 字节，正在擦除设备暂存区…`;
+      const begin = await sendOtaCommand(`OTA_BEGIN,${firmware.size},${firmware.crc32},1`);
+      if (begin[1] !== 'BEGIN' || begin[2] !== 'OK') throw new Error('设备未确认 OTA 开始');
+
+      for (let offset = 0; offset < firmware.size; offset += OTA_PACKET_BYTES) {
+        const chunk = firmware.image.slice(offset, Math.min(offset + OTA_PACKET_BYTES, firmware.size));
+        const command = `OTA_DATA,${offset},${bytesToHex(chunk)},${crc16Ccitt(chunk)}`;
+        let accepted = false;
+        for (let attempt = 0; attempt < 3 && !accepted; attempt++) {
+          const ack = await sendOtaCommand(command);
+          accepted = ack[1] === 'ACK' && Number(ack[2]) === offset + chunk.length;
+        }
+        if (!accepted) throw new Error(`数据包 ${offset} 未获设备确认`);
+        const percent = Math.round(((offset + chunk.length) / firmware.size) * 100);
+        ui.otaStatus.textContent = `正在上传固件：${percent}%（${offset + chunk.length}/${firmware.size} 字节）`;
+      }
+
+      const end = await sendOtaCommand('OTA_END');
+      if (end[1] !== 'END' || end[2] !== 'OK') throw new Error('设备未通过完整性校验');
+      const reboot = await sendOtaCommand('OTA_REBOOT');
+      if (reboot[1] !== 'REBOOTING') throw new Error('设备未进入重启升级');
+      ui.otaStatus.textContent = '升级文件已接收，设备正在重启并覆盖应用区；完成后请重新连接。';
+    } finally {
+      S.ota.running = false; S.busy = false; refreshButtons();
+    }
+  }
+
+  ui.otaFile.onchange = () => {
+    const file = ui.otaFile.files && ui.otaFile.files[0];
+    ui.otaStatus.textContent = file ? `已选择：${file.name}，等待上传。` : '未选择升级文件。';
+    refreshButtons();
+  };
+  ui.btnOta.onclick = () => {
+    runOta().catch(error => {
+      console.error(error);
+      ui.otaStatus.textContent = `升级失败：${error.message || error}。设备仍保留旧程序，请重新连接后重试。`;
+      alert(`OTA 升级失败：${error.message || error}`);
+    });
+  };
 
   async function sendOledText(silent = false) {
     if (!S.connected || !S.writeFn) {
@@ -1051,6 +1283,7 @@
   }
 
   function onDisconnected() {
+    rejectOtaWaiter(new Error('蓝牙连接在 OTA 过程中断开'));
     S.connected = false;
     S.notifyChar = null; S.writeChar = null; S.writeFn = null; S.rx = ''; S.bleWriteChain = Promise.resolve();
     ui.btnConn.textContent = '连接设备';
