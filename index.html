@@ -83,7 +83,7 @@
   <header>
     <div>
       <h1 id="appTitle">眨眼测试</h1>
-      <div class="sub">连接设备后，按步骤完成本次测试并保存数据。<span id="debugGateStatus">调试台默认锁定；首次短接 PB0 到 3V3 开启授权，长按标题显示；再次短接关闭授权。</span></div>
+      <div class="sub">连接设备后，按步骤完成本次测试并保存数据。<span id="debugGateStatus">调试台临时免硬件授权；长按标题即可显示。</span></div>
     </div>
     <button id="btnConn" class="primary">连接设备</button>
   </header>
@@ -136,7 +136,7 @@
   <section id="debugPanel" class="card hidden">
     <h2>调试台</h2>
     <div class="fields">
-      <div class="field"><label>调试入口</label><span class="tiny">硬件授权已通过；点击关闭只隐藏页面，再次短接可关闭授权。</span></div>
+      <div class="field"><label>调试入口</label><span class="tiny">当前为临时测试模式，无需短接；点击关闭只隐藏页面。</span></div>
       <div class="field"><label>自动抗干扰等级</label><input id="fMult" type="number" value="4" min="1" max="12" step="0.5"></div>
       <div class="field"><label>两次眨眼最短间隔（毫秒）</label><input id="fRefr" type="number" value="300" min="0" step="50"></div>
     </div>
@@ -220,6 +220,9 @@
     maxEvents: 5000,
     sampleTimeoutMs: 3000
   };
+
+  // 临时测试开关：false = 长按标题即可进入调试台；后续需要硬件授权时改为 true。
+  const DEBUG_HARDWARE_GATE = false;
 
   const SERVICE_UUID = 0xffe0;
 
@@ -550,6 +553,13 @@
   }
 
   async function openDebugPanel() {
+    if (!DEBUG_HARDWARE_GATE) {
+      S.debugAuthorized = true;
+      ui.debugPanel.classList.remove('hidden');
+      setDebugGateStatus('调试台临时免硬件授权；长按标题即可重新显示。');
+      updateDebugControls();
+      return;
+    }
     if (S.debugAuthorized) {
       ui.debugPanel.classList.remove('hidden');
       updateDebugControls();
@@ -699,8 +709,8 @@
   ui.oledImagePreview.addEventListener('pointercancel', finishOledImageDrag);
   ui.btnOledImageClear.onclick = clearOledImage;
   clearOledImagePreview();
-  ui.btnDebugClose.onclick = () => lockDebugPanel('调试台已隐藏；再次长按标题可打开，再次短接可关闭授权。');
-  setDebugGateStatus('调试台默认锁定；首次短接 PB0 到 3V3 开启授权，长按标题显示；再次短接关闭授权。');
+  ui.btnDebugClose.onclick = () => lockDebugPanel('调试台已隐藏；再次长按标题即可打开。');
+  setDebugGateStatus('调试台临时免硬件授权；长按标题即可显示。');
   updateDebugControls();
 
   function beginSegment(t, utcMs) {
