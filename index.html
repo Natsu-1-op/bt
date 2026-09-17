@@ -83,7 +83,7 @@
   <header>
     <div>
       <h1 id="appTitle">眨眼测试</h1>
-      <div class="sub">连接设备后，按步骤完成本次测试并保存数据。<span id="debugGateStatus">调试台默认锁定；长按标题并将 PB0 授权焊盘短接到 3V3 才能打开。</span></div>
+      <div class="sub">连接设备后，按步骤完成本次测试并保存数据。<span id="debugGateStatus">调试台默认锁定；首次短接 PB0 到 3V3 开启授权，长按标题显示；再次短接关闭授权。</span></div>
     </div>
     <button id="btnConn" class="primary">连接设备</button>
   </header>
@@ -136,7 +136,7 @@
   <section id="debugPanel" class="card hidden">
     <h2>调试台</h2>
     <div class="fields">
-      <div class="field"><label>调试入口</label><span class="tiny">硬件授权已通过；拔掉授权短接后会自动关闭。</span></div>
+      <div class="field"><label>调试入口</label><span class="tiny">硬件授权已通过；点击关闭只隐藏页面，再次短接可关闭授权。</span></div>
       <div class="field"><label>自动抗干扰等级</label><input id="fMult" type="number" value="4" min="1" max="12" step="0.5"></div>
       <div class="field"><label>两次眨眼最短间隔（毫秒）</label><input id="fRefr" type="number" value="300" min="0" step="50"></div>
     </div>
@@ -542,7 +542,7 @@
       if (!S.debugAuthorized || !S.connected || !S.writeFn || S.debugPollBusy) return;
       S.debugPollBusy = true;
       try {
-        if (!await requestDebugUnlock()) lockDebugPanel('未检测到授权短接，调试台已自动关闭。');
+        if (!await requestDebugUnlock()) lockDebugPanel('硬件授权已关闭，调试台已自动隐藏。');
       } finally {
         S.debugPollBusy = false;
       }
@@ -559,15 +559,15 @@
       setDebugGateStatus('请先连接采集设备，再长按标题检查授权。');
       return;
     }
-    setDebugGateStatus('正在检查硬件授权，请保持 PB0 与 3V3 短接…');
+    setDebugGateStatus('正在检查硬件授权，请先将 PB0 短接到 3V3…');
     const ok = await requestDebugUnlock();
     if (!ok) {
-      lockDebugPanel('未检测到授权短接：请将 PB0 授权焊盘短接到 3V3 后重试。');
+      lockDebugPanel('未检测到硬件授权：请将 PB0 短接到 3V3 后重试。');
       return;
     }
     S.debugAuthorized = true;
     ui.debugPanel.classList.remove('hidden');
-    setDebugGateStatus('硬件授权已通过；拔掉授权短接后会自动关闭。');
+    setDebugGateStatus('硬件授权已通过；点击关闭只隐藏页面，再次短接可关闭授权。');
     updateDebugControls();
     startDebugPoll();
   }
@@ -699,8 +699,8 @@
   ui.oledImagePreview.addEventListener('pointercancel', finishOledImageDrag);
   ui.btnOledImageClear.onclick = clearOledImage;
   clearOledImagePreview();
-  ui.btnDebugClose.onclick = () => lockDebugPanel('调试台已关闭；再次使用请长按标题并保持授权短接。');
-  setDebugGateStatus('调试台默认锁定；长按标题并将 PB0 授权焊盘短接到 3V3 才能打开。');
+  ui.btnDebugClose.onclick = () => lockDebugPanel('调试台已隐藏；再次长按标题可打开，再次短接可关闭授权。');
+  setDebugGateStatus('调试台默认锁定；首次短接 PB0 到 3V3 开启授权，长按标题显示；再次短接关闭授权。');
   updateDebugControls();
 
   function beginSegment(t, utcMs) {
