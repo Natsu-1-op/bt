@@ -50,6 +50,8 @@
   .field input,.field select,.field textarea{width:100%;background:#0e1b2d;border:1px solid #2a3f5c;color:var(--text);
           border-radius:6px;padding:6px;font:inherit;font-size:13px}
   .field textarea{min-height:58px;resize:vertical;line-height:1.35}
+  .oled-preview{display:block;width:256px;max-width:100%;height:64px;image-rendering:pixelated;
+                background:#000;border:1px solid #2a3f5c;border-radius:6px;margin-top:7px}
   #freqWrap{height:200px;position:relative;border:1px solid var(--line);border-radius:8px;background:#050b13;overflow:hidden}
   #freqWrap canvas{width:100%;height:100%;display:block}
   .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:9px;color:var(--muted);font-size:11.5px}
@@ -145,6 +147,12 @@
     </div>
     <p class="tiny">最多输入 16 个字符，每行最多 8 个字，实际显示为 OLED 下两行；文字由手机渲染后传给设备。连接设备后可随时重新发送。</p>
     <div class="fields">
+      <div class="field"><label>设备屏幕下两行图片</label><input id="oledImage" type="file" accept="image/*"><canvas id="oledImagePreview" class="oled-preview" width="128" height="32" aria-label="OLED图片预览"></canvas></div>
+      <div class="field"><label>屏幕图片</label><button id="btnOledImageSend" class="ghost" type="button" disabled>发送图片到设备</button><button id="btnOledImageClear" class="ghost" type="button" disabled>清除图片</button></div>
+      <div class="field"><label>说明</label><span class="tiny">图片会自动缩放到 128×32 像素以内，保持原比例并居中，不裁剪、不拉伸；发送图片后会替换下两行文字。</span></div>
+    </div>
+    <p id="oledImageStatus" class="tiny">尚未选择图片。建议使用黑白、轮廓清晰的图片。</p>
+    <div class="fields">
       <div class="field"><label>固件升级文件（OTA）</label><input id="otaFile" type="file" accept=".hex,.ihex,text/plain"></div>
       <div class="field"><label>升级操作</label><button id="btnOta" class="warn" type="button">上传 HEX 并升级</button></div>
       <div class="field"><label>说明</label><span class="tiny">仅选择已链接到 0x08002000 的应用 HEX；升级时会暂停采集。</span></div>
@@ -217,6 +225,8 @@
     btnFull: $('btnFull'), btnDemo: $('btnDemo'), btnLoad: $('btnLoad'), btnExportBundle: $('btnExportBundle'),
     appTitle: $('appTitle'), debugPanel: $('debugPanel'), debugEnabled: $('debugEnabled'), btnDebugClose: $('btnDebugClose'),
     oledText: $('oledText'), btnOledSend: $('btnOledSend'),
+    oledImage: $('oledImage'), oledImagePreview: $('oledImagePreview'), oledImageStatus: $('oledImageStatus'),
+    btnOledImageSend: $('btnOledImageSend'), btnOledImageClear: $('btnOledImageClear'),
     otaFile: $('otaFile'), btnOta: $('btnOta'), otaStatus: $('otaStatus'),
     dot: $('dot'), conn: $('conn'), help: $('help'),
     mState: $('mState'), mCount: $('mCount'), mBpm: $('mBpm'), mLast: $('mLast'),
@@ -241,6 +251,8 @@
     shownBpm: null,           // 次/分；null = 网页显示的是 --
     writeFn: null,            // 写入闭包（有的模块只支持 writeWithoutResponse）
     bleWriteChain: Promise.resolve(),
+    // 统计命令只保留最新一条；不要让每 500ms 的重复刷新在图片传输后排成长队。
+    statsLastLine: '', statsQueuedLine: '', statsWritePending: false,
     // 设备时间轴锚点：把单片机的采样时间戳映射到网页时间轴上。
     // 之所以需要它，见 deviceTimeline() 上面的说明。
     dev: { lastMcu: null, lastPage: null, lastSeq: null },
@@ -264,6 +276,7 @@
     quality: { received: 0, saturatedLow: 0, saturatedHigh: 0 },
     clock: { anchorTimeline: null, anchorUtc: null, lastWallOffset: null },
     demoBlinks: [],
+    oledImageBitmap: null, oledImageName: '', oledImageUrl: '',
     ota: { running: false, waiter: null }
   };
 
@@ -408,6 +421,8 @@
     ui.btnFull.disabled = !hasSession;
     ui.btnLoad.disabled = running || paused || cal || S.busy;
     ui.btnOledSend.disabled = !S.connected || !S.writeFn || S.busy;
+    ui.btnOledImageSend.disabled = !S.connected || !S.writeFn || S.busy || !S.oledImageBitmap;
+    ui.btnOledImageClear.disabled = !S.oledImageBitmap;
     ui.btnOta.disabled = !S.connected || !S.writeFn || S.demo || running || paused || cal || S.busy ||
       S.ota.running || !ui.otaFile.files || !ui.otaFile.files.length;
     if (S.busy) [ui.btnConn, ui.btnStart, ui.btnStop, ui.btnClear, ui.btnExportBundle, ui.btnPause, ui.btnAnalyze, ui.btnFull, ui.btnLoad, ui.btnOledSend, ui.btnOta].forEach(b => { b.disabled = true; });
@@ -485,6 +500,49 @@
     try { localStorage.setItem(OLED_TEXT_STORAGE_KEY, JSON.stringify({ text: ui.oledText.value })); } catch (_) {}
   };
   ui.oledText.oninput = saveOledText;
+  function clearOledImagePreview() {
+    const ctx = ui.oledImagePreview.getContext('2d');
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 128, 32);
+  }
+  function clearOledImage() {
+    if (S.oledImageUrl) URL.revokeObjectURL(S.oledImageUrl);
+    S.oledImageUrl = ''; S.oledImageBitmap = null; S.oledImageName = '';
+    ui.oledImage.value = '';
+    clearOledImagePreview();
+    ui.oledImageStatus.textContent = '尚未选择图片。建议使用黑白、轮廓清晰的图片。';
+    refreshButtons();
+  }
+  ui.oledImage.onchange = () => {
+    const file = ui.oledImage.files && ui.oledImage.files[0];
+    if (!file) { clearOledImage(); return; }
+    if (S.oledImageUrl) URL.revokeObjectURL(S.oledImageUrl);
+    const url = URL.createObjectURL(file);
+    S.oledImageUrl = url; S.oledImageBitmap = null; S.oledImageName = file.name;
+    ui.oledImageStatus.textContent = `正在处理图片：${file.name}…`;
+    refreshButtons();
+    const image = new Image();
+    image.onload = () => {
+      if (S.oledImageUrl !== url) return;
+      drawOledImage(image, ui.oledImagePreview);
+      S.oledImageBitmap = canvasToOledBitmap(ui.oledImagePreview);
+      ui.oledImageStatus.textContent = `已处理：${file.name}。图片将等比例缩放到 128×32 像素并居中。`;
+      refreshButtons();
+      URL.revokeObjectURL(url);
+      S.oledImageUrl = '';
+    };
+    image.onerror = () => {
+      if (S.oledImageUrl === url) {
+        URL.revokeObjectURL(url); S.oledImageUrl = '';
+        S.oledImageBitmap = null; S.oledImageName = '';
+        clearOledImagePreview();
+        ui.oledImageStatus.textContent = '图片读取失败，请换一个常见格式的图片。';
+        refreshButtons();
+      }
+    };
+    image.src = url;
+  };
+  ui.btnOledImageClear.onclick = clearOledImage;
+  clearOledImagePreview();
   ui.btnDebugClose.onclick = () => ui.debugPanel.classList.add('hidden');
   try { ui.debugEnabled.checked = localStorage.getItem(DEBUG_STORAGE_KEY) === '1'; } catch (_) { ui.debugEnabled.checked = false; }
   updateDebugControls();
@@ -533,7 +591,8 @@
       S.writeError = null;
       resetFilter();
       S.phase = 'CAL'; S.cal = []; S.calStartMs = null;
-      setBlinkCount(0); S.events = []; S.inBlink = false; S.refractoryUntil = 0;
+      setBlinkCount(0); S.shownBpm = 0; ui.mBpm.textContent = '0 次';
+      S.events = []; S.inBlink = false; S.refractoryUntil = 0;
       S.rec = { t: [], raw: [], filt: [], ev: [] }; S.recStartMs = 0; S.recEndMs = 0;
       S.currentChunk = null; S.chunkIndex = 0; S.nextEventId = 1; S.activeSegment = null;
       S.viewingHistory = false; S.recordingStartedAt = performance.now(); S.timeoutHandling = false; S.disconnectPending = false;
@@ -553,6 +612,8 @@
       setState('准备中', 'warnc');
       ui.help.textContent = '正在准备测试：请睁眼、尽量保持自然状态，约 3 秒后开始计数。';
       await persistSession();
+      /* 立即给设备一个有效的 0/min，避免 Rate 一直停留在 --。 */
+      pushStats();
       refreshButtons();
     } catch (err) {
       S.phase = 'STOPPED'; lockSessionInputs(false); refreshButtons();
@@ -909,6 +970,10 @@
   //    次数取 S.count，频率取 S.shownBpm —— 也就是屏幕上正在显示的那个值。
   //    两者同源，所以不会出现「网页一个频率、设备另一个频率」。
   const BLE_WRITE_CHUNK_BYTES = 20;
+  // 分片之间留一点间隔：模块的 UART 只有 115200，1027 字节的 T 位图命令
+  // 被瞬间灌进去会把模块的发送缓冲冲掉，单片机收到残缺命令就整条丢弃。
+  // 20 字节在 115200 下只要 1.7ms，给 6ms 留约 3.5 倍余量。
+  const BLE_WRITE_CHUNK_GAP_MS = 6;
 
   // Web Bluetooth 在未协商更大 MTU 时，单次写入通常只能容纳约 20 字节。
   // 所有下行命令都在这里顺序切片，避免 OLED 位图或统计帧互相插入。
@@ -917,6 +982,9 @@
     const work = S.bleWriteChain.then(async () => {
       for (let i = 0; i < bytes.length; i += BLE_WRITE_CHUNK_BYTES) {
         await S.writeFn(bytes.slice(i, i + BLE_WRITE_CHUNK_BYTES));
+        if (i + BLE_WRITE_CHUNK_BYTES < bytes.length && BLE_WRITE_CHUNK_GAP_MS > 0) {
+          await new Promise(resolve => setTimeout(resolve, BLE_WRITE_CHUNK_GAP_MS));
+        }
       }
       return true;
     });
@@ -931,7 +999,75 @@
   function pushStats() {
     if (!S.connected || !S.writeFn) return;
     const bpm = (S.shownBpm === null || !Number.isFinite(S.shownBpm)) ? -1 : Math.round(S.shownBpm);
-    queueBleText(`N,${S.count},${bpm}\n`);
+    const line = `N,${S.count},${bpm}\n`;
+
+    // 500ms tick 只负责更新“最新值”。如果前面的 T 位图还在传输，
+    // 不再把同一条 N 命令重复塞进 BLE/UART 队列。
+    if (line === S.statsLastLine || line === S.statsQueuedLine) return;
+    S.statsQueuedLine = line;
+    if (S.statsWritePending) return;
+
+    S.statsWritePending = true;
+    (async () => {
+      try {
+        while (S.connected && S.writeFn && S.statsQueuedLine) {
+          const next = S.statsQueuedLine;
+          S.statsQueuedLine = '';
+          if (next === S.statsLastLine) continue;
+          const ok = await queueBleText(next);
+          if (!ok) return;
+          S.statsLastLine = next;
+        }
+      } finally {
+        S.statsWritePending = false;
+        // 在最后一次写入期间如果又产生了新统计，立即补发最新值。
+        if (S.connected && S.writeFn && S.statsQueuedLine &&
+            S.statsQueuedLine !== S.statsLastLine) pushStats();
+      }
+    })().catch(err => console.error('统计下发失败', err));
+  }
+
+  // 将 Canvas 转成 OLED SSD1306 可接受的 4 页、128×32 位图。
+  // 固件会把这 4 页写到 OLED 的下半屏（物理第 3、4 行）。
+  function canvasToOledBitmap(canvas) {
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const pixels = ctx.getImageData(0, 0, 128, 32).data;
+    const bitmap = new Uint8Array(128 * 4);
+    for (let page = 0; page < 4; page++) {
+      for (let x = 0; x < 128; x++) {
+        let value = 0;
+        for (let bit = 0; bit < 8; bit++) {
+          const y = page * 8 + bit;
+          if (pixels[(y * 128 + x) * 4] >= 96) value |= 1 << bit;
+        }
+        bitmap[page * 128 + x] = value;
+      }
+    }
+    return bitmap;
+  }
+
+  // 将图片等比例缩放到 128×32 内，居中，不裁剪、不拉伸。
+  // 输出仍然是 OLED 的 1-bit 位图，不需要单片机增加图片解码库。
+  function drawOledImage(image, canvas) {
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const iw = image.naturalWidth || image.width;
+    const ih = image.naturalHeight || image.height;
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 128, 32);
+    if (!iw || !ih) return;
+    const scale = Math.min(128 / iw, 32 / ih);
+    const dw = Math.max(1, Math.round(iw * scale));
+    const dh = Math.max(1, Math.round(ih * scale));
+    const dx = Math.floor((128 - dw) / 2);
+    const dy = Math.floor((32 - dh) / 2);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(image, dx, dy, dw, dh);
+  }
+
+  function renderOledImage(image) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128; canvas.height = 32;
+    drawOledImage(image, canvas);
+    return canvasToOledBitmap(canvas);
   }
 
   // 将手机上的两行文字绘制成 OLED SSD1306 的 128×32 位图。
@@ -979,19 +1115,7 @@
       }
     }
 
-    const pixels = ctx.getImageData(0, 0, 128, 32).data;
-    const bitmap = new Uint8Array(128 * 4);
-    for (let page = 0; page < 4; page++) {
-      for (let x = 0; x < 128; x++) {
-        let value = 0;
-        for (let bit = 0; bit < 8; bit++) {
-          const y = page * 8 + bit;
-          if (y < 32 && pixels[(y * 128 + x) * 4] >= 96) value |= 1 << bit;
-        }
-        bitmap[page * 128 + x] = value;
-      }
-    }
-    return bitmap;
+    return canvasToOledBitmap(canvas);
   }
 
   function bytesToHex(bytes) {
@@ -1195,6 +1319,25 @@
   }
   ui.btnOledSend.onclick = () => { sendOledText(false).catch(console.error); };
 
+  async function sendOledImage(silent = false) {
+    if (!S.connected || !S.writeFn) {
+      if (!silent) setConnText('请先连接采集设备，再发送屏幕图片。', false);
+      return false;
+    }
+    if (!S.oledImageBitmap) {
+      if (!silent) ui.oledImageStatus.textContent = '请先选择并处理一张图片。';
+      return false;
+    }
+    if (!silent) setConnText('采集设备已连接，屏幕图片发送中…', true);
+    const ok = await queueBleText(`T,${bytesToHex(S.oledImageBitmap)}\n`);
+    if (!silent && ok) {
+      setConnText('采集设备已连接，屏幕图片已更新。', true);
+      ui.oledImageStatus.textContent = `已发送：${S.oledImageName || '图片'}。`;
+    }
+    return ok;
+  }
+  ui.btnOledImageSend.onclick = () => { sendOledImage(false).catch(console.error); };
+
   // ------------------------------------------------------------------
   // BLE
   // ------------------------------------------------------------------
@@ -1235,18 +1378,23 @@
       if (!S.notifyChar) throw new Error('这个服务下没有可通知的特征');
 
       S.rx = ''; S.dev = { lastMcu: null, lastPage: null, lastSeq: null }; S.bleWriteChain = Promise.resolve();
+      S.statsLastLine = ''; S.statsQueuedLine = '';
       S.notifyChar.addEventListener('characteristicvaluechanged',
         e => onChunk(new TextDecoder().decode(e.target.value)));
       await S.notifyChar.startNotifications();
 
       S.connected = true;
       S.demo = false;
-      ui.btnConn.textContent = '断开设备';
-      const deviceName = (S.device.name || '').trim();
-      const genericName = !deviceName || /^(bt|ble|bluetooth)$/i.test(deviceName);
-      setConnText(`采集设备已连接${genericName ? '' : `（${deviceName}）`}，可以开始准备测试。`, true);
-      refreshButtons();
-      sendOledText(true).catch(console.error);
+     ui.btnConn.textContent = '断开设备';
+     const deviceName = (S.device.name || '').trim();
+     const genericName = !deviceName || /^(bt|ble|bluetooth)$/i.test(deviceName);
+     setConnText(`采集设备已连接${genericName ? '' : `（${deviceName}）`}，可以开始准备测试。`, true);
+     refreshButtons();
+      // 先发一条短的有效统计，再发送可能持续数秒的 128×32 位图。
+      // 这样现有固件也能在刚连接时显示 Rate: 0/min，不必等图片传完或按暂停。
+      if (!S.session && S.shownBpm === null) S.shownBpm = 0;
+      pushStats();
+     sendOledText(true).catch(console.error);
     } catch (err) {
       console.error(err);
       if (S.device && S.device.gatt.connected) S.device.gatt.disconnect();
@@ -1286,6 +1434,7 @@
     rejectOtaWaiter(new Error('蓝牙连接在 OTA 过程中断开'));
     S.connected = false;
     S.notifyChar = null; S.writeChar = null; S.writeFn = null; S.rx = ''; S.bleWriteChain = Promise.resolve();
+    S.statsLastLine = ''; S.statsQueuedLine = '';
     ui.btnConn.textContent = '连接设备';
     setConnText('设备已断开');
     if (S.phase === 'RUN' || S.phase === 'CAL' || S.phase === 'PAUSE') {
