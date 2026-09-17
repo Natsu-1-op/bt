@@ -869,7 +869,11 @@
     try {
       setConnText('选择蓝牙设备…');
       S.device = await navigator.bluetooth.requestDevice({
-        filters: [{ services: [SERVICE_UUID] }, { services: [0xfff0] }],
+        // 不用 service filter：部分 BLE 设备不会在广播包里声明 GATT
+        // Service UUID，使用 filter 会让浏览器选择框直接显示为空。
+        // 这里允许用户看到附近设备，再由后面的 GATT 服务检查确认
+        // 是否为本采集模块。
+        acceptAllDevices: true,
         optionalServices: [SERVICE_UUID, 0xfff0]
       });
       S.device.addEventListener('gattserverdisconnected', onDisconnected);
@@ -907,7 +911,11 @@
       console.error(err);
       if (S.device && S.device.gatt.connected) S.device.gatt.disconnect();
       S.notifyChar = null; S.writeChar = null; S.writeFn = null;
-      setConnText(`连接失败：${err.message || err}`);
+      const detail = err.message || String(err);
+      const notOurDevice = S.device && /getPrimaryService|服务|service/i.test(detail);
+      setConnText(notOurDevice
+        ? '连接失败：所选设备不是采集模块（请选择 VG6328A-MS）'
+        : `连接失败：${detail}`);
       S.connected = false;
       refreshButtons();
     }
