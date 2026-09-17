@@ -1236,7 +1236,7 @@
     return true;
   }
 
-  function waitOtaReply(timeoutMs = 5000) {
+  function waitOtaReply(timeoutMs = 15000) {
     return new Promise((resolve, reject) => {
       if (S.ota.waiter) { reject(new Error('OTA 协议状态异常')); return; }
       const timer = setTimeout(() => {
@@ -1247,9 +1247,13 @@
     });
   }
 
-  async function sendOtaCommand(command) {
+ async function sendOtaCommand(command) {
+   if (!S.connected || !S.writeFn) throw new Error('蓝牙已断开');
+    // 连接后可能还在发送 OLED 文字/图片位图。必须先等已有 BLE
+    // 写入队列排空，再启动应答计时，否则命令尚未真正发出就会超时。
+    await S.bleWriteChain;
     if (!S.connected || !S.writeFn) throw new Error('蓝牙已断开');
-    const replyPromise = waitOtaReply();
+   const replyPromise = waitOtaReply();
     const sent = await queueBleText(`${command}\n`);
     if (!sent) { rejectOtaWaiter(new Error('蓝牙写入失败')); return replyPromise; }
     return replyPromise;
@@ -1265,9 +1269,10 @@
     try {
       ui.otaStatus.textContent = '正在读取并校验 HEX…';
       const firmware = parseIntelHex(await file.text());
-      ui.otaStatus.textContent = `文件有效：${firmware.size} 字节，正在擦除设备暂存区…`;
-      const begin = await sendOtaCommand(`OTA_BEGIN,${firmware.size},${firmware.crc32},1`);
-      if (begin[1] !== 'BEGIN' || begin[2] !== 'OK') throw new Error('设备未确认 OTA 开始');
+      ui.otaStatus.textContent = `文件有效：${firmware.size} 字节，正在等待蓝牙发送队列完成…`;
+     const begin = await sendOtaCommand(`OTA_BEGIN,${firmware.size},${firmware.crc32},1`);
+     if (begin[1] !== 'BEGIN' || begin[2] !== 'OK') throw new Error('设备未确认 OTA 开始');
+      ui.otaStatus.textContent = `暂存区已准备好，正在上传固件：0%（0/${firmware.size} 字节）`;
 
       for (let offset = 0; offset < firmware.size; offset += OTA_PACKET_BYTES) {
         const chunk = firmware.image.slice(offset, Math.min(offset + OTA_PACKET_BYTES, firmware.size));
