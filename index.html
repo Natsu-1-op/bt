@@ -608,13 +608,14 @@
       if (filt > S.thUp) {
         if (width >= config.minWidthMs && width <= config.maxWidthMs) {
           setBlinkCount(S.count + 1);
-          pushStats();             // 次数变了就立刻同步给设备（只在眨眼这一刻，不是每个采样点）
           const ev = { t: S.fallingMs, utcMs: sampleUtc(S.fallingMs, Date.now()), amp: Math.round(S.baseline - S.minInBlink), width };
           S.events.push(ev);
           if (S.events.length > CFG.maxEvents) S.events.shift();
           S.rec.ev.push(ev);
           addEvent('blink', ev.t, ev.utcMs, { amplitude_counts: ev.amp, width_ms: width, algorithm: 'web-live-v1' });
           ui.mLast.textContent = `${width.toFixed(0)} ms / ${ev.amp}`;
+          updateLiveStats(t);
+          pushStats();             // 事件写入后再同步，避免设备端落后一次眨眼
         }
         S.refractoryUntil = t + refr;
         S.inBlink = false;
@@ -628,20 +629,43 @@
        屏幕刷新只在 setBlinkCount() 里做，下发只在眨眼那一刻和 500ms tick 做。 */
   }
 
-  function realtimeBpm(nowMs) {
-    if (!S.events.length) return null;
+  function recentBlinkCount(nowMs) {
+    if (!Number.isFinite(nowMs)) return 0;
     const win = CFG.realtimeWindowMs;
     const from = nowMs - win;
     let n = 0;
     for (let i = S.events.length - 1; i >= 0; i--) {
       if (S.events[i].t >= from) n++; else break;
     }
+    return n;
+  }
+
+  function realtimeBpm(nowMs) {
+    const n = recentBlinkCount(nowMs);
+    if (n === 0) return 0;
+    const win = CFG.realtimeWindowMs;
+    const from = nowMs - win;
     if (n === 0) return 0;
     const activeMs = S.session
       ? activeDurationMs(S.session, from, nowMs)
       : Math.min(win, Math.max(1000, nowMs - (S.recStartMs || 0)));
     if (activeMs < 1000) return null;
     return Math.round(n / activeMs * 60000);
+  }
+
+  // 设备时间轴与 performance.now() 同一坐标系；在两个蓝牙通知之间
+  // 用最近一个采样点向前估计，避免实时卡片必须等下一包或按“暂停”才刷新。
+  function liveTimelineNow() {
+    if (!Number.isFinite(S.lastT)) return performance.now();
+    if (!S.lastSampleAt) return S.lastT;
+    return S.lastT + Math.max(0, performance.now() - S.lastSampleAt);
+  }
+
+  function updateLiveStats(nowMs = liveTimelineNow()) {
+    if (!S.session || !Number.isFinite(nowMs)) return;
+    const n = recentBlinkCount(nowMs);
+    ui.mBpm.textContent = `${n} 次`;
+    S.shownBpm = realtimeBpm(nowMs);
   }
 
   // ------------------------------------------------------------------
@@ -905,7 +929,9 @@
       S.connected = true;
       S.demo = false;
       ui.btnConn.textContent = '断开设备';
-      setConnText(`${S.device.name || '采集设备'} 已连接，可以开始准备测试。`, true);
+      const deviceName = (S.device.name || '').trim();
+      const genericName = !deviceName || /^(bt|ble|bluetooth)$/i.test(deviceName);
+      setConnText(`采集设备已连接${genericName ? '' : `（${deviceName}）`}，可以开始准备测试。`, true);
       refreshButtons();
     } catch (err) {
       console.error(err);
@@ -1361,7 +1387,7 @@
         }
       }
       onSample(t, Math.round(clamp(v, 0, 4095)));
-      if (S.phase === 'RUN' || S.phase === 'CAL') { S.shownBpm = realtimeBpm(t); ui.mBpm.textContent = fmtBpm(S.shownBpm); }
+      if (S.phase === 'RUN' || S.phase === 'CAL') updateLiveStats(t);
     }, 5); // 200Hz
     demoNextBlink = 800;
     refreshButtons();
@@ -1378,11 +1404,8 @@
   }
   ui.btnDemo.onclick = () => { if (S.demo) stopDemo(); else startDemo(); };
 
-  const fmtBpm = v => (v === null ? '--' : `${v} 次/分`);
-
-  // 实时频率刷新
-  // 这个 500ms tick 是「网页当前频率」的唯一计算点：先更新屏幕，
-  // 再把同一个值下发给设备，保证两边显示的是同一个数。
+  // 实时统计刷新：卡片显示最近 30 秒次数，设备镜像仍接收同一时间窗
+  // 换算出的次/分。两者都在同一个 tick 更新，暂停不会成为刷新触发条件。
   setInterval(() => {
     const active = S.phase === 'CAL' || S.phase === 'RUN';
     if (active && !S.busy && !S.timeoutHandling && S.recordingStartedAt) {
@@ -1401,9 +1424,8 @@
         S.lastT - S.session.first_timeline_ms >= CFG.maxRecordMs) {
       stopSession('max_duration').catch(console.error);
     }
-    if (S.phase === 'RUN' || S.phase === 'PAUSE') {
-      S.shownBpm = realtimeBpm(S.lastT);
-      ui.mBpm.textContent = fmtBpm(S.shownBpm);
+    if (S.phase === 'CAL' || S.phase === 'RUN' || S.phase === 'PAUSE') {
+      updateLiveStats();
     }
     pushStats();
   }, 500);
