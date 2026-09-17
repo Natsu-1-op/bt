@@ -133,6 +133,12 @@
       <div class="field"><label>手动阈值（ADC 计数）</label><input id="manualDrop" type="number" value="60" min="18" max="2000" step="1" disabled></div>
       <div class="field"><label>说明</label><span class="tiny">数值越大越不容易把纹波当作眨眼。</span></div>
     </div>
+    <div class="fields">
+      <div class="field"><label>设备屏幕文字</label><input id="oledText" type="text" maxlength="8" value="眨眼采集"></div>
+      <div class="field"><label>屏幕文字</label><button id="btnOledSend" class="ghost" type="button">发送到设备</button></div>
+      <div class="field"><label>说明</label><span class="tiny">一行中文使用第 1、2 物理行显示。</span></div>
+    </div>
+    <p class="tiny">最多 8 个汉字；文字由手机渲染后传给 OLED。连接设备后可随时重新发送。</p>
     <p id="debugReadout" class="note">默认使用自动抗干扰设置。手动阈值仅建议在调试时使用。</p>
     <div class="row"><button id="btnDebugClose" class="ghost">关闭调试台</button></div>
   </section>
@@ -199,6 +205,7 @@
     btnClear: $('btnClear'), btnAnalyze: $('btnAnalyze'),
     btnFull: $('btnFull'), btnDemo: $('btnDemo'), btnLoad: $('btnLoad'), btnExportBundle: $('btnExportBundle'),
     appTitle: $('appTitle'), debugPanel: $('debugPanel'), debugEnabled: $('debugEnabled'), btnDebugClose: $('btnDebugClose'),
+    oledText: $('oledText'), btnOledSend: $('btnOledSend'),
     dot: $('dot'), conn: $('conn'), help: $('help'),
     mState: $('mState'), mCount: $('mCount'), mBpm: $('mBpm'), mLast: $('mLast'),
     fT0: $('fT0'), fT1: $('fT1'), fWin: $('fWin'), fStep: $('fStep'), fMult: $('fMult'), fRefr: $('fRefr'),
@@ -387,7 +394,8 @@
     ui.btnAnalyze.disabled = !hasSession;
     ui.btnFull.disabled = !hasSession;
     ui.btnLoad.disabled = running || paused || cal || S.busy;
-    if (S.busy) [ui.btnConn, ui.btnStart, ui.btnStop, ui.btnClear, ui.btnExportBundle, ui.btnPause, ui.btnAnalyze, ui.btnFull, ui.btnLoad].forEach(b => { b.disabled = true; });
+    ui.btnOledSend.disabled = !S.connected || !S.writeFn || S.busy;
+    if (S.busy) [ui.btnConn, ui.btnStart, ui.btnStop, ui.btnClear, ui.btnExportBundle, ui.btnPause, ui.btnAnalyze, ui.btnFull, ui.btnLoad, ui.btnOledSend].forEach(b => { b.disabled = true; });
   }
 
   // ------------------------------------------------------------------
@@ -420,6 +428,7 @@
   }
 
   const DEBUG_STORAGE_KEY = 'blink-debug-enabled';
+  const OLED_TEXT_STORAGE_KEY = 'blink-oled-text-v1';
   function setDebugEntrance(enabled) {
     ui.debugEnabled.checked = enabled;
     try { localStorage.setItem(DEBUG_STORAGE_KEY, enabled ? '1' : '0'); } catch (_) {}
@@ -450,6 +459,14 @@
   ui.debugEnabled.onchange = () => setDebugEntrance(ui.debugEnabled.checked);
   ui.manualThresholdEnabled.onchange = updateDebugControls;
   ui.manualDrop.oninput = updateDebugControls;
+  const savedOledText = (() => {
+    try { return JSON.parse(localStorage.getItem(OLED_TEXT_STORAGE_KEY) || '{}'); } catch (_) { return {}; }
+  })();
+  if (typeof savedOledText.text === 'string') ui.oledText.value = savedOledText.text.slice(0, 8);
+  const saveOledText = () => {
+    try { localStorage.setItem(OLED_TEXT_STORAGE_KEY, JSON.stringify({ text: ui.oledText.value })); } catch (_) {}
+  };
+  ui.oledText.oninput = saveOledText;
   ui.btnDebugClose.onclick = () => ui.debugPanel.classList.add('hidden');
   try { ui.debugEnabled.checked = localStorage.getItem(DEBUG_STORAGE_KEY) === '1'; } catch (_) { ui.debugEnabled.checked = false; }
   updateDebugControls();
@@ -872,15 +889,79 @@
   //
   //    次数取 S.count，频率取 S.shownBpm —— 也就是屏幕上正在显示的那个值。
   //    两者同源，所以不会出现「网页一个频率、设备另一个频率」。
+  const BLE_WRITE_CHUNK_BYTES = 20;
+
+  // Web Bluetooth 在未协商更大 MTU 时，单次写入通常只能容纳约 20 字节。
+  // 所有下行命令都在这里顺序切片，避免 OLED 位图或统计帧互相插入。
+  function queueBleBytes(bytes) {
+    if (!S.connected || !S.writeFn) return Promise.resolve(false);
+    const work = S.bleWriteChain.then(async () => {
+      for (let i = 0; i < bytes.length; i += BLE_WRITE_CHUNK_BYTES) {
+        await S.writeFn(bytes.slice(i, i + BLE_WRITE_CHUNK_BYTES));
+      }
+      return true;
+    });
+    S.bleWriteChain = work.catch(err => { console.error('蓝牙下行失败', err); return false; });
+    return work;
+  }
+
+  function queueBleText(text) {
+    return queueBleBytes(new TextEncoder().encode(text));
+  }
+
   function pushStats() {
     if (!S.connected || !S.writeFn) return;
     const bpm = (S.shownBpm === null || !Number.isFinite(S.shownBpm)) ? -1 : Math.round(S.shownBpm);
-    const payload = `N,${S.count},${bpm}\n`;
-    const write = S.writeFn;
-    S.bleWriteChain = S.bleWriteChain
-      .then(() => write(new TextEncoder().encode(payload)))
-      .catch(() => {});
+    queueBleText(`N,${S.count},${bpm}\n`);
   }
+
+  // 将手机上的一行中文绘制成 OLED SSD1306 的 128×16 位图。
+  // 一行中文使用 OLED 的物理第 1、2 行，共 2 页、256 字节；
+  // STM32 不需要中文字库，网页使用手机已有的中文字体渲染。
+  function renderOledText(text) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128; canvas.height = 16;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 128, 16);
+    ctx.fillStyle = '#fff';
+    ctx.font = '16px "PingFang SC", "Hiragino Sans GB", sans-serif';
+    ctx.textBaseline = 'top';
+    ctx.fillText(String(text || '').slice(0, 8), 0, 0);
+
+    const pixels = ctx.getImageData(0, 0, 128, 16).data;
+    const bitmap = new Uint8Array(128 * 2);
+    for (let page = 0; page < 2; page++) {
+      for (let x = 0; x < 128; x++) {
+        let value = 0;
+        for (let bit = 0; bit < 8; bit++) {
+          const y = page * 8 + bit;
+          if (pixels[(y * 128 + x) * 4] >= 96) value |= 1 << bit;
+        }
+        bitmap[page * 128 + x] = value;
+      }
+    }
+    return bitmap;
+  }
+
+  function bytesToHex(bytes) {
+    let out = '';
+    for (const byte of bytes) out += byte.toString(16).padStart(2, '0').toUpperCase();
+    return out;
+  }
+
+  async function sendOledText(silent = false) {
+    if (!S.connected || !S.writeFn) {
+      if (!silent) setConnText('请先连接采集设备，再发送屏幕文字。', false);
+      return false;
+    }
+    saveOledText();
+    const bitmap = renderOledText(ui.oledText.value);
+    if (!silent) setConnText('采集设备已连接，屏幕文字发送中…', true);
+    const ok = await queueBleText(`T,${bytesToHex(bitmap)}\n`);
+    if (!silent && ok) setConnText('采集设备已连接，屏幕文字已更新。', true);
+    return ok;
+  }
+  ui.btnOledSend.onclick = () => { sendOledText(false).catch(console.error); };
 
   // ------------------------------------------------------------------
   // BLE
@@ -933,6 +1014,7 @@
       const genericName = !deviceName || /^(bt|ble|bluetooth)$/i.test(deviceName);
       setConnText(`采集设备已连接${genericName ? '' : `（${deviceName}）`}，可以开始准备测试。`, true);
       refreshButtons();
+      sendOledText(true).catch(console.error);
     } catch (err) {
       console.error(err);
       if (S.device && S.device.gatt.connected) S.device.gatt.disconnect();
