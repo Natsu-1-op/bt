@@ -51,7 +51,12 @@
           border-radius:6px;padding:6px;font:inherit;font-size:13px}
   .field textarea{min-height:58px;resize:vertical;line-height:1.35}
   .oled-preview{display:block;width:256px;max-width:100%;height:64px;image-rendering:pixelated;
-                background:#000;border:1px solid #2a3f5c;border-radius:6px;margin-top:7px}
+                background:#000;border:1px solid #2a3f5c;border-radius:6px;margin-top:0;
+                touch-action:none;cursor:grab;user-select:none}
+  .oled-preview.dragging{cursor:grabbing}
+  .oled-image-editor{width:256px;max-width:100%;margin-top:7px}
+  .oled-image-tools{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:6px}
+  .oled-image-tools button{padding:6px 9px;font-size:11px}
   #freqWrap{height:200px;position:relative;border:1px solid var(--line);border-radius:8px;background:#050b13;overflow:hidden}
   #freqWrap canvas{width:100%;height:100%;display:block}
   .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:9px;color:var(--muted);font-size:11.5px}
@@ -78,7 +83,7 @@
   <header>
     <div>
       <h1 id="appTitle">眨眼测试</h1>
-      <div class="sub">连接设备后，按步骤完成本次测试并保存数据。</div>
+      <div class="sub">连接设备后，按步骤完成本次测试并保存数据。<span id="debugGateStatus">调试台默认锁定；长按标题并将 PB0 授权焊盘短接到 3V3 才能打开。</span></div>
     </div>
     <button id="btnConn" class="primary">连接设备</button>
   </header>
@@ -131,7 +136,7 @@
   <section id="debugPanel" class="card hidden">
     <h2>调试台</h2>
     <div class="fields">
-      <div class="field"><label>调试入口</label><label><input id="debugEnabled" type="checkbox">允许长按“眨眼测试”进入调试台</label></div>
+      <div class="field"><label>调试入口</label><span class="tiny">硬件授权已通过；拔掉授权短接后会自动关闭。</span></div>
       <div class="field"><label>自动抗干扰等级</label><input id="fMult" type="number" value="4" min="1" max="12" step="0.5"></div>
       <div class="field"><label>两次眨眼最短间隔（毫秒）</label><input id="fRefr" type="number" value="300" min="0" step="50"></div>
     </div>
@@ -147,9 +152,9 @@
     </div>
     <p class="tiny">最多输入 16 个字符，每行最多 8 个字，实际显示为 OLED 下两行；文字由手机渲染后传给设备。连接设备后可随时重新发送。</p>
     <div class="fields">
-      <div class="field"><label>设备屏幕下两行图片</label><input id="oledImage" type="file" accept="image/*"><canvas id="oledImagePreview" class="oled-preview" width="128" height="32" aria-label="OLED图片预览"></canvas></div>
+      <div class="field"><label>设备屏幕下两行图片</label><input id="oledImage" type="file" accept="image/*"><div class="oled-image-editor"><canvas id="oledImagePreview" class="oled-preview" width="128" height="32" aria-label="OLED图片预览"></canvas><div class="oled-image-tools"><button id="btnOledImageCenter" class="ghost" type="button" disabled>恢复居中</button><span class="tiny">可直接拖动预览调整实际显示位置</span></div></div></div>
       <div class="field"><label>屏幕图片</label><button id="btnOledImageSend" class="ghost" type="button" disabled>发送图片到设备</button><button id="btnOledImageClear" class="ghost" type="button" disabled>清除图片</button></div>
-      <div class="field"><label>说明</label><span class="tiny">图片会自动缩放到 128×32 像素以内，保持原比例并居中，不裁剪、不拉伸；发送图片后会替换下两行文字。</span></div>
+      <div class="field"><label>说明</label><span class="tiny">图片会自动等比例缩放并保持完整显示；拖动预览可调整实际 OLED 位置，发送图片后会替换下两行文字。</span></div>
     </div>
     <p id="oledImageStatus" class="tiny">尚未选择图片。建议使用黑白、轮廓清晰的图片。</p>
     <div class="fields">
@@ -223,9 +228,9 @@
     btnConn: $('btnConn'), btnStart: $('btnStart'), btnPause: $('btnPause'), btnStop: $('btnStop'),
     btnClear: $('btnClear'), btnAnalyze: $('btnAnalyze'),
     btnFull: $('btnFull'), btnDemo: $('btnDemo'), btnLoad: $('btnLoad'), btnExportBundle: $('btnExportBundle'),
-    appTitle: $('appTitle'), debugPanel: $('debugPanel'), debugEnabled: $('debugEnabled'), btnDebugClose: $('btnDebugClose'),
+    appTitle: $('appTitle'), debugPanel: $('debugPanel'), debugGateStatus: $('debugGateStatus'), btnDebugClose: $('btnDebugClose'),
     oledText: $('oledText'), btnOledSend: $('btnOledSend'),
-    oledImage: $('oledImage'), oledImagePreview: $('oledImagePreview'), oledImageStatus: $('oledImageStatus'),
+    oledImage: $('oledImage'), oledImagePreview: $('oledImagePreview'), btnOledImageCenter: $('btnOledImageCenter'), oledImageStatus: $('oledImageStatus'),
     btnOledImageSend: $('btnOledImageSend'), btnOledImageClear: $('btnOledImageClear'),
     otaFile: $('otaFile'), btnOta: $('btnOta'), otaStatus: $('otaStatus'),
     dot: $('dot'), conn: $('conn'), help: $('help'),
@@ -276,8 +281,10 @@
     quality: { received: 0, saturatedLow: 0, saturatedHigh: 0 },
     clock: { anchorTimeline: null, anchorUtc: null, lastWallOffset: null },
     demoBlinks: [],
-    oledImageBitmap: null, oledImageName: '', oledImageUrl: '',
-    ota: { running: false, waiter: null }
+    oledImageBitmap: null, oledImageName: '', oledImageUrl: '', oledImageElement: null,
+    oledImageOffsetX: 0, oledImageOffsetY: 0, oledImageGeometry: null, oledImageDrag: null,
+    ota: { running: false, waiter: null },
+    debugAuthorized: false, debugWaiter: null, debugPollTimer: null, debugPollBusy: false
   };
 
   // ------------------------------------------------------------------
@@ -423,6 +430,7 @@
     ui.btnOledSend.disabled = !S.connected || !S.writeFn || S.busy;
     ui.btnOledImageSend.disabled = !S.connected || !S.writeFn || S.busy || !S.oledImageBitmap;
     ui.btnOledImageClear.disabled = !S.oledImageBitmap;
+    ui.btnOledImageCenter.disabled = !S.oledImageElement || S.busy;
     ui.btnOta.disabled = !S.connected || !S.writeFn || S.demo || running || paused || cal || S.busy ||
       S.ota.running || !ui.otaFile.files || !ui.otaFile.files.length;
     if (S.busy) [ui.btnConn, ui.btnStart, ui.btnStop, ui.btnClear, ui.btnExportBundle, ui.btnPause, ui.btnAnalyze, ui.btnFull, ui.btnLoad, ui.btnOledSend, ui.btnOta].forEach(b => { b.disabled = true; });
@@ -457,14 +465,7 @@
     ui.manualDrop.disabled = locked || !ui.manualThresholdEnabled.checked;
   }
 
-  const DEBUG_STORAGE_KEY = 'blink-debug-enabled';
   const OLED_TEXT_STORAGE_KEY = 'blink-oled-text-v1';
-  function setDebugEntrance(enabled) {
-    ui.debugEnabled.checked = enabled;
-    try { localStorage.setItem(DEBUG_STORAGE_KEY, enabled ? '1' : '0'); } catch (_) {}
-    if (!enabled) ui.debugPanel.classList.add('hidden');
-  }
-
   function updateDebugControls() {
     ui.manualDrop.disabled = ui.manualThresholdEnabled.disabled || !ui.manualThresholdEnabled.checked;
     ui.debugReadout.textContent = ui.manualThresholdEnabled.checked
@@ -472,13 +473,103 @@
       : '当前使用自动抗干扰设置。手动阈值仅建议在调试时使用。';
   }
 
-  function openDebugPanel() {
-    if (!ui.debugEnabled.checked) {
-      if (!confirm('调试入口当前关闭。是否开启并进入调试台？')) return;
-      setDebugEntrance(true);
+  function setDebugGateStatus(text) {
+    if (ui.debugGateStatus) ui.debugGateStatus.textContent = text;
+  }
+
+  function stopDebugPoll() {
+    if (S.debugPollTimer !== null) {
+      clearInterval(S.debugPollTimer);
+      S.debugPollTimer = null;
     }
+    S.debugPollBusy = false;
+  }
+
+  function lockDebugPanel(message = '调试台已锁定。') {
+    stopDebugPoll();
+    S.debugAuthorized = false;
+    ui.debugPanel.classList.add('hidden');
+    setDebugGateStatus(message);
+  }
+
+  function rejectDebugWaiter(error) {
+    const waiter = S.debugWaiter;
+    if (!waiter) return;
+    clearTimeout(waiter.timer);
+    S.debugWaiter = null;
+    waiter.reject(error instanceof Error ? error : new Error(String(error)));
+  }
+
+  function consumeDebugReply(line) {
+    if (!line.startsWith('DBG,')) return false;
+    const waiter = S.debugWaiter;
+    if (!waiter) return true;
+    clearTimeout(waiter.timer);
+    S.debugWaiter = null;
+    waiter.resolve(line === 'DBG,1');
+    return true;
+  }
+
+  function waitDebugReply(timeoutMs = 1500) {
+    return new Promise((resolve, reject) => {
+      if (S.debugWaiter) { reject(new Error('调试授权查询正在进行')); return; }
+      const timer = setTimeout(() => {
+        if (S.debugWaiter && S.debugWaiter.timer === timer) S.debugWaiter = null;
+        reject(new Error('等待硬件授权应答超时'));
+      }, timeoutMs);
+      S.debugWaiter = { resolve, reject, timer };
+    });
+  }
+
+  async function requestDebugUnlock() {
+    if (!S.connected || !S.writeFn) return false;
+    if (S.debugWaiter) return false;
+    // 连接后的统计/文字位图可能还在队列中，先等它们发完，再开始授权超时计时。
+    await S.bleWriteChain;
+    if (!S.connected || !S.writeFn) return false;
+    const reply = waitDebugReply();
+    const sent = await queueBleText('DBG?\n');
+    if (!sent) {
+      rejectDebugWaiter(new Error('蓝牙写入失败'));
+      return false;
+    }
+    try { return await reply; } catch (_) { return false; }
+  }
+
+  function startDebugPoll() {
+    stopDebugPoll();
+    S.debugPollTimer = setInterval(async () => {
+      if (!S.debugAuthorized || !S.connected || !S.writeFn || S.debugPollBusy) return;
+      S.debugPollBusy = true;
+      try {
+        if (!await requestDebugUnlock()) lockDebugPanel('未检测到授权短接，调试台已自动关闭。');
+      } finally {
+        S.debugPollBusy = false;
+      }
+    }, 2000);
+  }
+
+  async function openDebugPanel() {
+    if (S.debugAuthorized) {
+      ui.debugPanel.classList.remove('hidden');
+      updateDebugControls();
+      return;
+    }
+    if (!S.connected || !S.writeFn) {
+      setDebugGateStatus('请先连接采集设备，再长按标题检查授权。');
+      return;
+    }
+    setDebugGateStatus('正在检查硬件授权，请保持 PB0 与 3V3 短接…');
+    const ok = await requestDebugUnlock();
+    if (!ok) {
+      lockDebugPanel('未检测到授权短接：请将 PB0 授权焊盘短接到 3V3 后重试。');
+      return;
+    }
+    S.debugAuthorized = true;
     ui.debugPanel.classList.remove('hidden');
+    setDebugGateStatus('硬件授权已通过；拔掉授权短接后会自动关闭。');
     updateDebugControls();
+    startDebugPoll();
   }
 
   let debugPressTimer = null;
@@ -486,7 +577,6 @@
   ['pointerup', 'pointerleave', 'pointercancel'].forEach(type => ui.appTitle.addEventListener(type, () => {
     clearTimeout(debugPressTimer); debugPressTimer = null;
   }));
-  ui.debugEnabled.onchange = () => setDebugEntrance(ui.debugEnabled.checked);
   ui.manualThresholdEnabled.onchange = updateDebugControls;
   ui.manualDrop.oninput = updateDebugControls;
   const savedOledText = (() => {
@@ -500,13 +590,45 @@
     try { localStorage.setItem(OLED_TEXT_STORAGE_KEY, JSON.stringify({ text: ui.oledText.value })); } catch (_) {}
   };
   ui.oledText.oninput = saveOledText;
+  function getOledImageGeometry(image) {
+    const iw = image && (image.naturalWidth || image.width);
+    const ih = image && (image.naturalHeight || image.height);
+    if (!iw || !ih) return null;
+    const scale = Math.min(128 / iw, 32 / ih);
+    const dw = Math.max(1, Math.round(iw * scale));
+    const dh = Math.max(1, Math.round(ih * scale));
+    const baseX = (128 - dw) / 2;
+    const baseY = (32 - dh) / 2;
+    return {
+      dw, dh, baseX, baseY,
+      minOffsetX: -baseX, maxOffsetX: 128 - dw - baseX,
+      minOffsetY: -baseY, maxOffsetY: 32 - dh - baseY
+    };
+  }
   function clearOledImagePreview() {
     const ctx = ui.oledImagePreview.getContext('2d');
     ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 128, 32);
   }
+  function updateOledImagePreview() {
+    if (!S.oledImageElement) {
+      S.oledImageBitmap = null; S.oledImageGeometry = null;
+      clearOledImagePreview(); refreshButtons(); return;
+    }
+    const g = S.oledImageGeometry = getOledImageGeometry(S.oledImageElement);
+    S.oledImageOffsetX = clamp(S.oledImageOffsetX, g.minOffsetX, g.maxOffsetX);
+    S.oledImageOffsetY = clamp(S.oledImageOffsetY, g.minOffsetY, g.maxOffsetY);
+    drawOledImage(S.oledImageElement, ui.oledImagePreview, S.oledImageOffsetX, S.oledImageOffsetY);
+    S.oledImageBitmap = canvasToOledBitmap(ui.oledImagePreview);
+    const x = Math.round(g.baseX + S.oledImageOffsetX);
+    const y = Math.round(g.baseY + S.oledImageOffsetY);
+    ui.oledImageStatus.textContent = `已处理：${S.oledImageName || '图片'}。位置：${x},${y}；可拖动预览调整，图片保持等比例且不裁剪。`;
+    refreshButtons();
+  }
   function clearOledImage() {
     if (S.oledImageUrl) URL.revokeObjectURL(S.oledImageUrl);
     S.oledImageUrl = ''; S.oledImageBitmap = null; S.oledImageName = '';
+    S.oledImageElement = null; S.oledImageGeometry = null;
+    S.oledImageOffsetX = 0; S.oledImageOffsetY = 0; S.oledImageDrag = null;
     ui.oledImage.value = '';
     clearOledImagePreview();
     ui.oledImageStatus.textContent = '尚未选择图片。建议使用黑白、轮廓清晰的图片。';
@@ -518,22 +640,22 @@
     if (S.oledImageUrl) URL.revokeObjectURL(S.oledImageUrl);
     const url = URL.createObjectURL(file);
     S.oledImageUrl = url; S.oledImageBitmap = null; S.oledImageName = file.name;
+    S.oledImageElement = null; S.oledImageOffsetX = 0; S.oledImageOffsetY = 0;
     ui.oledImageStatus.textContent = `正在处理图片：${file.name}…`;
     refreshButtons();
     const image = new Image();
     image.onload = () => {
       if (S.oledImageUrl !== url) return;
-      drawOledImage(image, ui.oledImagePreview);
-      S.oledImageBitmap = canvasToOledBitmap(ui.oledImagePreview);
-      ui.oledImageStatus.textContent = `已处理：${file.name}。图片将等比例缩放到 128×32 像素并居中。`;
-      refreshButtons();
+      S.oledImageElement = image;
+      S.oledImageOffsetX = 0; S.oledImageOffsetY = 0;
+      updateOledImagePreview();
       URL.revokeObjectURL(url);
       S.oledImageUrl = '';
     };
     image.onerror = () => {
       if (S.oledImageUrl === url) {
         URL.revokeObjectURL(url); S.oledImageUrl = '';
-        S.oledImageBitmap = null; S.oledImageName = '';
+        S.oledImageBitmap = null; S.oledImageName = ''; S.oledImageElement = null;
         clearOledImagePreview();
         ui.oledImageStatus.textContent = '图片读取失败，请换一个常见格式的图片。';
         refreshButtons();
@@ -541,10 +663,44 @@
     };
     image.src = url;
   };
+  ui.btnOledImageCenter.onclick = () => {
+    if (!S.oledImageElement) return;
+    S.oledImageOffsetX = 0; S.oledImageOffsetY = 0; updateOledImagePreview();
+  };
+  function imagePointerPosition(event) {
+    const rect = ui.oledImagePreview.getBoundingClientRect();
+    return {
+      x: (event.clientX - rect.left) * 128 / rect.width,
+      y: (event.clientY - rect.top) * 32 / rect.height
+    };
+  }
+  ui.oledImagePreview.addEventListener('pointerdown', event => {
+    if (!S.oledImageElement || !S.oledImageGeometry) return;
+    event.preventDefault();
+    const p = imagePointerPosition(event);
+    S.oledImageDrag = { id: event.pointerId, x: p.x, y: p.y, ox: S.oledImageOffsetX, oy: S.oledImageOffsetY };
+    ui.oledImagePreview.classList.add('dragging');
+    ui.oledImagePreview.setPointerCapture(event.pointerId);
+  });
+  ui.oledImagePreview.addEventListener('pointermove', event => {
+    const d = S.oledImageDrag;
+    if (!d || d.id !== event.pointerId || !S.oledImageGeometry) return;
+    event.preventDefault();
+    const p = imagePointerPosition(event), g = S.oledImageGeometry;
+    S.oledImageOffsetX = clamp(d.ox + p.x - d.x, g.minOffsetX, g.maxOffsetX);
+    S.oledImageOffsetY = clamp(d.oy + p.y - d.y, g.minOffsetY, g.maxOffsetY);
+    updateOledImagePreview();
+  });
+  function finishOledImageDrag(event) {
+    if (!S.oledImageDrag || S.oledImageDrag.id !== event.pointerId) return;
+    S.oledImageDrag = null; ui.oledImagePreview.classList.remove('dragging');
+  }
+  ui.oledImagePreview.addEventListener('pointerup', finishOledImageDrag);
+  ui.oledImagePreview.addEventListener('pointercancel', finishOledImageDrag);
   ui.btnOledImageClear.onclick = clearOledImage;
   clearOledImagePreview();
-  ui.btnDebugClose.onclick = () => ui.debugPanel.classList.add('hidden');
-  try { ui.debugEnabled.checked = localStorage.getItem(DEBUG_STORAGE_KEY) === '1'; } catch (_) { ui.debugEnabled.checked = false; }
+  ui.btnDebugClose.onclick = () => lockDebugPanel('调试台已关闭；再次使用请长按标题并保持授权短接。');
+  setDebugGateStatus('调试台默认锁定；长按标题并将 PB0 授权焊盘短接到 3V3 才能打开。');
   updateDebugControls();
 
   function beginSegment(t, utcMs) {
@@ -911,6 +1067,7 @@
   function parseLine(line) {
     const s = line.trim();
     if (!s) return;
+    if (consumeDebugReply(s)) return;
     if (consumeOtaReply(s)) return;
     const p = s.split(',');
     if (p[0] === 'B') {
@@ -1029,6 +1186,7 @@
 
   // 将 Canvas 转成 OLED SSD1306 可接受的 4 页、128×32 位图。
   // 固件会把这 4 页写到 OLED 的下半屏（物理第 3、4 行）。
+  // 不能只取 R 通道：红/蓝色图片的 R 值可能很低，会在二值化时整块消失。
   function canvasToOledBitmap(canvas) {
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const pixels = ctx.getImageData(0, 0, 128, 32).data;
@@ -1038,7 +1196,10 @@
         let value = 0;
         for (let bit = 0; bit < 8; bit++) {
           const y = page * 8 + bit;
-          if (pixels[(y * 128 + x) * 4] >= 96) value |= 1 << bit;
+          const i = (y * 128 + x) * 4;
+          const alpha = pixels[i + 3] / 255;
+          const luma = (0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2]) * alpha;
+          if (luma >= 96) value |= 1 << bit;
         }
         bitmap[page * 128 + x] = value;
       }
@@ -1046,21 +1207,21 @@
     return bitmap;
   }
 
-  // 将图片等比例缩放到 128×32 内，居中，不裁剪、不拉伸。
+  // 将图片等比例缩放到 128×32 内，并按用户拖动的偏移绘制。
   // 输出仍然是 OLED 的 1-bit 位图，不需要单片机增加图片解码库。
-  function drawOledImage(image, canvas) {
+  function drawOledImage(image, canvas, offsetX = 0, offsetY = 0) {
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    const iw = image.naturalWidth || image.width;
-    const ih = image.naturalHeight || image.height;
     ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 128, 32);
-    if (!iw || !ih) return;
-    const scale = Math.min(128 / iw, 32 / ih);
-    const dw = Math.max(1, Math.round(iw * scale));
-    const dh = Math.max(1, Math.round(ih * scale));
-    const dx = Math.floor((128 - dw) / 2);
-    const dy = Math.floor((32 - dh) / 2);
+    const g = getOledImageGeometry(image);
+    if (!g) return;
+    const dx = Math.round(g.baseX + offsetX);
+    const dy = Math.round(g.baseY + offsetY);
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, 0, 128, 32); ctx.clip();
+    // 保留平滑缩放后再二值化，细线比直接最近邻缩放更完整；颜色在上面统一按亮度处理。
     ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(image, dx, dy, dw, dh);
+    ctx.drawImage(image, dx, dy, g.dw, g.dh);
+    ctx.restore();
   }
 
   function renderOledImage(image) {
@@ -1437,6 +1598,8 @@
 
   function onDisconnected() {
     rejectOtaWaiter(new Error('蓝牙连接在 OTA 过程中断开'));
+    rejectDebugWaiter(new Error('蓝牙连接已断开'));
+    lockDebugPanel('设备已断开；调试台已锁定。');
     S.connected = false;
     S.notifyChar = null; S.writeChar = null; S.writeFn = null; S.rx = ''; S.bleWriteChain = Promise.resolve();
     S.statsLastLine = ''; S.statsQueuedLine = '';
