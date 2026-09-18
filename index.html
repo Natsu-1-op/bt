@@ -83,7 +83,7 @@
   <header>
     <div>
       <h1 id="appTitle">眨眼测试</h1>
-      <div class="sub">连接设备后，按步骤完成本次测试并保存数据。<span id="debugGateStatus">调试台临时免硬件授权；长按标题即可显示。</span></div>
+      <div class="sub">连接设备后，按步骤完成本次测试并保存数据。<span id="debugGateStatus"></span></div>
     </div>
     <button id="btnConn" class="primary">连接设备</button>
   </header>
@@ -136,7 +136,7 @@
   <section id="debugPanel" class="card hidden">
     <h2>调试台</h2>
     <div class="fields">
-      <div class="field"><label>调试入口</label><span class="tiny">当前为临时测试模式，无需短接；点击关闭只隐藏页面。</span></div>
+      <div class="field"><label>调试入口</label><span class="tiny"></span></div>
       <div class="field"><label>自动抗干扰等级</label><input id="fMult" type="number" value="4" min="1" max="12" step="0.5"></div>
       <div class="field"><label>两次眨眼最短间隔（毫秒）</label><input id="fRefr" type="number" value="300" min="0" step="50"></div>
     </div>
@@ -221,8 +221,15 @@
     sampleTimeoutMs: 3000
   };
 
-  // 临时测试开关：false = 长按标题即可进入调试台；后续需要硬件授权时改为 true。
-  const DEBUG_HARDWARE_GATE = false;
+  // 硬件调试授权开关。
+  //   true  = 长按标题后必须把 PB0 短接到 3V3 才能进调试台（OTA 在调试台里）
+  //   false = 长按标题直接进（临时调试用，别长期这样）
+  const DEBUG_HARDWARE_GATE = true;
+  // 长按标题后给一段时间去短接 PB0，这段时间内反复查询，而不是一次超时就判失败。
+  const DEBUG_UNLOCK_WINDOW_MS = 12000;
+  // 轮询复查：只有「明确读到 DBG,0」连续失败这么多次才自动上锁。
+  // 单次超时或链路忙不算失败 —— 否则 OTA 期间链路拥塞会把调试台中途关掉。
+  const DEBUG_POLL_FAIL_LIMIT = 3;
 
   const SERVICE_UUID = 0xffe0;
 
@@ -287,7 +294,8 @@
     oledImageBitmap: null, oledImageName: '', oledImageUrl: '', oledImageElement: null,
     oledImageOffsetX: 0, oledImageOffsetY: 0, oledImageGeometry: null, oledImageDrag: null,
     ota: { running: false, waiter: null },
-    debugAuthorized: false, debugWaiter: null, debugPollTimer: null, debugPollBusy: false
+    debugAuthorized: false, debugWaiter: null, debugPollTimer: null, debugPollBusy: false,
+    debugPollFails: 0
   };
 
   // ------------------------------------------------------------------
@@ -488,7 +496,7 @@
     S.debugPollBusy = false;
   }
 
-  function lockDebugPanel(message = '调试台已锁定。') {
+  function lockDebugPanel(message = '') {
     stopDebugPoll();
     S.debugAuthorized = false;
     ui.debugPanel.classList.add('hidden');
@@ -524,28 +532,43 @@
     });
   }
 
-  async function requestDebugUnlock() {
-    if (!S.connected || !S.writeFn) return false;
-    if (S.debugWaiter) return false;
-    // 连接后的统计/文字位图可能还在队列中，先等它们发完，再开始授权超时计时。
-    await S.bleWriteChain;
-    if (!S.connected || !S.writeFn) return false;
+  // 查一次硬件授权，返回三态：
+  //   true  = 设备明确回 DBG,1（已授权）
+  //   false = 设备明确回 DBG,0（未授权）
+  //   null  = 没拿到答复（链路忙 / 超时 / 没连上）—— 不算失败，绝不能据此上锁
+  async function debugQueryOnce() {
+    if (!S.connected || !S.writeFn) return null;
+    if (S.debugWaiter) return null;        // 上一次查询还没回，别插队
+    try { await S.bleWriteChain; } catch (_) { return null; }
+    if (!S.connected || !S.writeFn) return null;
     const reply = waitDebugReply();
     const sent = await queueBleText('DBG?\n');
-    if (!sent) {
-      rejectDebugWaiter(new Error('蓝牙写入失败'));
-      return false;
-    }
-    try { return await reply; } catch (_) { return false; }
+    if (!sent) { rejectDebugWaiter(new Error('蓝牙写入失败')); return null; }
+    try { return await reply; } catch (_) { return null; }
+  }
+
+  // 兼容旧调用点：只有明确读到 1 才算授权通过。
+  async function requestDebugUnlock() {
+    return (await debugQueryOnce()) === true;
   }
 
   function startDebugPoll() {
     stopDebugPoll();
     S.debugPollTimer = setInterval(async () => {
       if (!S.debugAuthorized || !S.connected || !S.writeFn || S.debugPollBusy) return;
+      if (S.ota.running) return;            // ★ OTA 期间不打扰链路
       S.debugPollBusy = true;
       try {
-        if (!await requestDebugUnlock()) lockDebugPanel('硬件授权已关闭，调试台已自动隐藏。');
+        const r = await debugQueryOnce();
+        if (r === true) {
+          S.debugPollFails = 0;
+        } else if (r === false) {
+          // 只有明确读到 DBG,0 才计数；连续多次才上锁，避免误关
+          if (++S.debugPollFails >= DEBUG_POLL_FAIL_LIMIT) {
+            lockDebugPanel('');
+          }
+        }
+        // r === null：链路忙或超时，什么都不做
       } finally {
         S.debugPollBusy = false;
       }
@@ -556,7 +579,7 @@
     if (!DEBUG_HARDWARE_GATE) {
       S.debugAuthorized = true;
       ui.debugPanel.classList.remove('hidden');
-      setDebugGateStatus('调试台临时免硬件授权；长按标题即可重新显示。');
+      setDebugGateStatus('');
       updateDebugControls();
       return;
     }
@@ -566,18 +589,25 @@
       return;
     }
     if (!S.connected || !S.writeFn) {
-      setDebugGateStatus('请先连接采集设备，再长按标题检查授权。');
+      setDebugGateStatus('');
       return;
     }
-    setDebugGateStatus('正在检查硬件授权，请先将 PB0 短接到 3V3…');
-    const ok = await requestDebugUnlock();
+    // 反复查询，给用户时间去短接 PB0（短接后固件也会主动推 DBG,1）
+    const deadline = performance.now() + DEBUG_UNLOCK_WINDOW_MS;
+    let ok = false;
+    while (performance.now() < deadline) {
+      const left = Math.ceil((deadline - performance.now()) / 1000);
+      setDebugGateStatus(String(left));
+      if (await debugQueryOnce() === true) { ok = true; break; }
+      await new Promise(resolve => setTimeout(resolve, 400));
+    }
     if (!ok) {
-      lockDebugPanel('未检测到硬件授权：请将 PB0 短接到 3V3 后重试。');
+      lockDebugPanel('');
       return;
     }
     S.debugAuthorized = true;
     ui.debugPanel.classList.remove('hidden');
-    setDebugGateStatus('硬件授权已通过；点击关闭只隐藏页面，再次短接可关闭授权。');
+    setDebugGateStatus('');
     updateDebugControls();
     startDebugPoll();
   }
@@ -709,8 +739,8 @@
   ui.oledImagePreview.addEventListener('pointercancel', finishOledImageDrag);
   ui.btnOledImageClear.onclick = clearOledImage;
   clearOledImagePreview();
-  ui.btnDebugClose.onclick = () => lockDebugPanel('调试台已隐藏；再次长按标题即可打开。');
-  setDebugGateStatus('调试台临时免硬件授权；长按标题即可显示。');
+  ui.btnDebugClose.onclick = () => lockDebugPanel('');
+  setDebugGateStatus('');
   updateDebugControls();
 
   function beginSegment(t, utcMs) {
@@ -1609,7 +1639,7 @@
   function onDisconnected() {
     rejectOtaWaiter(new Error('蓝牙连接在 OTA 过程中断开'));
     rejectDebugWaiter(new Error('蓝牙连接已断开'));
-    lockDebugPanel('设备已断开；调试台已锁定。');
+    lockDebugPanel('');
     S.connected = false;
     S.notifyChar = null; S.writeChar = null; S.writeFn = null; S.rx = ''; S.bleWriteChain = Promise.resolve();
     S.statsLastLine = ''; S.statsQueuedLine = '';
