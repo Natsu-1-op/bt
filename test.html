@@ -149,7 +149,7 @@
   <section id="debugPanel" class="card hidden">
     <h2>调试台</h2>
     <div class="fields">
-      <div class="field"><label>调试入口</label><span class="tiny"></span></div>
+      <div class="field"><label>最小判定阈值（ADC 计数）</label><input id="fMinDrop" type="number" value="12" min="5" max="200" step="1"><span class="tiny">信号干净时才降得下来；低于自动阈值时不起作用</span></div>
       <div class="field"><label>自动抗干扰等级</label><input id="fMult" type="number" value="4" min="1" max="12" step="0.5"></div>
       <div class="field"><label>两次眨眼最短间隔（毫秒）</label><input id="fRefr" type="number" value="300" min="0" step="50"></div>
     </div>
@@ -291,7 +291,7 @@
     otaFile: $('otaFile'), btnOta: $('btnOta'), otaStatus: $('otaStatus'),
     dot: $('dot'), conn: $('conn'), help: $('help'),
     mState: $('mState'), mCount: $('mCount'), mBpm: $('mBpm'), mLast: $('mLast'),
-    fT0: $('fT0'), fT1: $('fT1'), fWin: $('fWin'), fStep: $('fStep'), fMult: $('fMult'), fRefr: $('fRefr'),
+    fT0: $('fT0'), fT1: $('fT1'), fWin: $('fWin'), fStep: $('fStep'), fMult: $('fMult'), fRefr: $('fRefr'), fMinDrop: $('fMinDrop'),
     subjectId: $('subjectId'), deviceId: $('deviceId'), operatorId: $('operatorId'), condition: $('condition'),
     manualThresholdEnabled: $('manualThresholdEnabled'), manualDrop: $('manualDrop'), debugReadout: $('debugReadout'),
     autoRange: $('autoRange'),
@@ -533,7 +533,7 @@
     return {
       adcMax: CFG.adcMax, sampleRateHz: CFG.sampleRateHz, maLength: CFG.maLength,
       calibrationMs: CFG.calibrationMs, noiseMultiplier: Number(ui.fMult.value) || CFG.noiseMultiplier,
-      minDropCounts: CFG.minDropCounts, releaseRatio: CFG.releaseRatio,
+      minDropCounts: Number(ui.fMinDrop.value) || CFG.minDropCounts, releaseRatio: CFG.releaseRatio,
       minWidthMs: CFG.minWidthMs, maxWidthMs: CFG.maxWidthMs,
       refractoryMs: Number(ui.fRefr.value) || CFG.refractoryMs, baselineAlpha: CFG.baselineAlpha,
       manualThresholdEnabled: ui.manualThresholdEnabled.checked,
@@ -1038,6 +1038,7 @@
       refractoryMs: c.refractoryMs,
       manualThresholdEnabled: !!c.manualThresholdEnabled,
       manualDropCounts: c.manualDropCounts,
+      minDropCounts: c.minDropCounts,
       oledText: ui.oledText && typeof ui.oledText.value === 'string' ? ui.oledText.value : '',
       updatedAt: Date.now(),
       updatedBy: 'test.html'
