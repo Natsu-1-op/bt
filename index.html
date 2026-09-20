@@ -139,7 +139,7 @@
     <h2>调试台</h2>
     <div class="fields">
       <div class="field"><label>调试入口</label><span class="tiny"></span></div>
-      <div class="field"><label>自动抗干扰等级</label><input id="fMult" type="number" value="4" min="1" max="12" step="0.5"></div>
+      <div class="field"><label>自动抗干扰等级</label><input id="fMult" type="number" value="2" min="1" max="12" step="0.5"></div>
       <div class="field"><label>两次眨眼最短间隔（毫秒）</label><input id="fRefr" type="number" value="300" min="0" step="50"></div>
     </div>
     <div class="fields">
@@ -178,7 +178,9 @@
     </div>
     <div class="fields">
       <div class="field"><label>每隔几秒统计一次</label><input id="fStep" type="number" value="5" min="1" step="1"></div>
-      <div class="field"><label>本机保存的测试</label><select id="sessionList"><option value="">当前测试</option></select></div>
+      <div class="field"><label>本机保存的测试</label><select id="sessionList"><option value="">当前测试</option></select>
+        <button id="btnDeleteSession" class="danger" type="button" style="width:100%;padding:6px;margin-top:6px;font-size:12px" disabled>删除这条</button>
+      </div>
       <div class="field"><label>查看历史测试</label><button id="btnLoad" class="ghost" style="width:100%;padding:6px">打开所选测试</button></div>
     </div>
     <div class="row" style="margin-bottom:9px">
@@ -209,7 +211,8 @@
     sampleRateHz: 200,
     maLength: 8,             // 8 点滑动平均：200Hz 下正好在 25/50/75Hz 零点，顺带压 50Hz
     calibrationMs: 3000,
-    noiseMultiplier: 4,
+    calibrationSkipMs: 300,  // 标定开头这段时间的样本不参与阈值计算（见 onSample 里的说明）
+    noiseMultiplier: 2,
     minDropCounts: 18,
     releaseRatio: 0.45,      // 回升到凹陷深度的 45% 就算脱离
     minWidthMs: 40,
@@ -252,7 +255,7 @@
     subjectId: $('subjectId'), deviceId: $('deviceId'), operatorId: $('operatorId'), condition: $('condition'),
     manualThresholdEnabled: $('manualThresholdEnabled'), manualDrop: $('manualDrop'), debugReadout: $('debugReadout'),
     autoRange: $('autoRange'),
-    sessionList: $('sessionList'),
+    sessionList: $('sessionList'), btnDeleteSession: $('btnDeleteSession'),
     sAvg: $('sAvg'), sCount: $('sCount'), sDur: $('sDur'), sWin: $('sWin')
   };
 
@@ -406,6 +409,22 @@
     }));
   }
 
+  // 删除一整条本机测试：会话本身 + 它的全部数据块 + 全部事件。
+  // 三个 store 放在同一个事务里：中途失败整体回滚，不会留下没有会话的孤儿数据块。
+  // 走和写入同一条队列（enqueueWrite），避免刚删完又被在途的写入写回来。
+  function deleteSession(sessionId) {
+    return enqueueWrite(db => new Promise((resolve, reject) => {
+      const tx = db.transaction(['sessions', 'chunks', 'events'], 'readwrite');
+      const range = IDBKeyRange.bound([sessionId, 0], [sessionId, Number.MAX_SAFE_INTEGER]);
+      tx.objectStore('sessions').delete(sessionId);
+      tx.objectStore('chunks').delete(range);
+      tx.objectStore('events').delete(range);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error('删除事务被中止'));
+    }));
+  }
+
   function saveBlob(name, type, parts) {
     const link = document.createElement('a');
     const url = URL.createObjectURL(new Blob(parts, { type }));
@@ -444,6 +463,7 @@
     ui.btnAnalyze.disabled = !hasSession;
     ui.btnFull.disabled = !hasSession;
     ui.btnLoad.disabled = running || paused || cal || S.busy;
+    ui.btnDeleteSession.disabled = !ui.sessionList.value || running || paused || cal || S.busy;
     ui.btnOledSend.disabled = !S.connected || !S.writeFn || S.busy;
     ui.btnOledImageSend.disabled = !S.connected || !S.writeFn || S.busy || !S.oledImageBitmap;
     ui.btnOledImageClear.disabled = !S.oledImageBitmap;
@@ -1029,7 +1049,10 @@
 
     if (S.phase === 'CAL') {
       if (S.calStartMs === null) S.calStartMs = t;
-      S.cal.push(filt);
+      // 点「开始测试」的瞬间，蓝牙开始收发会在波形开头打出一个尖峰。
+      // 这个尖峰一旦进了标定样本，MAD 会被抬高 → 判决阈值跟着被撑大 → 后面真实的眨眼反而检不出来。
+      // 所以开头 calibrationSkipMs 内的样本不进标定窗口；标定总时长不变，只是可用样本往后顺延。
+      if (t - S.calStartMs >= CFG.calibrationSkipMs) S.cal.push(filt);
       if (t - S.calStartMs >= CFG.calibrationMs) finishCalibration();
     } else if (S.phase === 'RUN') {
       detect(t, filt);
@@ -1971,6 +1994,36 @@
 
   ui.btnExportBundle.onclick = () => { exportBundle().catch(err => { console.error(err); alert(`导出失败：${err.message || err}`); }); };
   ui.btnLoad.onclick = () => { loadSelectedSession().catch(console.error); };
+
+  // 下拉框本身没有别的事件，选中项一变就刷新按钮可用状态
+  ui.sessionList.onchange = () => refreshButtons();
+
+  ui.btnDeleteSession.onclick = async () => {
+    const id = ui.sessionList.value;
+    if (!id) return;
+    const picked = ui.sessionList.selectedOptions[0];
+    const label = picked ? picked.textContent : id;
+    if (!confirm('删除这条本机测试？\n\n' + label + '\n\n会连同它的波形数据和事件一起删掉，删了不能恢复。')) return;
+    S.busy = true; refreshButtons();
+    try {
+      await S.writeChain;                        // 等在途写入落盘，否则可能删完又被写回
+      await deleteSession(id);
+      if (S.session && S.session.id === id) {
+        // 正在看的就是被删的那条，把界面复位
+        setBlinkCount(0); S.events = []; S.samples = []; S.session = null; S.currentChunk = null;
+        S.viewingHistory = false; S.writeError = null; S.recordingStartedAt = 0; S.phase = 'IDLE';
+        S.rec = { t: [], raw: [], filt: [], ev: [] }; S.recStartMs = 0; S.recEndMs = 0;
+        ui.mBpm.textContent = '--'; ui.mLast.textContent = '--'; S.shownBpm = null; pushStats();
+        clearSummary(); setState('待机', 'badc');
+      }
+      await refreshSessionList();
+      ui.sessionList.value = '';
+      ui.help.textContent = '已删除所选的本机测试。';
+    } catch (err) {
+      console.error(err);
+      alert('删除失败：' + (err.message || err));
+    } finally { S.busy = false; refreshButtons(); }
+  };
 
   // ------------------------------------------------------------------
   // 绘制
