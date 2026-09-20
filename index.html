@@ -171,7 +171,6 @@
     </div>
   </section>
 
-  <p class="tiny"><button id="btnDemo" class="ghost" style="margin-top:8px;padding:6px 10px;font-size:12px">演示模式（无设备）</button></p>
   <div id="cloudGate" class="cloud-gate hidden">
     <div class="cloud-box">
       <div id="cloudSpin" class="cloud-spin"></div>
@@ -251,7 +250,7 @@
   const ui = {
     btnConn: $('btnConn'), btnStart: $('btnStart'), btnPause: $('btnPause'), btnStop: $('btnStop'),
     btnClear: $('btnClear'), btnAnalyze: $('btnAnalyze'),
-    btnFull: $('btnFull'), btnDemo: $('btnDemo'), btnLoad: $('btnLoad'), btnExportBundle: $('btnExportBundle'),
+    btnFull: $('btnFull'), btnLoad: $('btnLoad'), btnExportBundle: $('btnExportBundle'),
     appTitle: $('appTitle'), debugPanel: $('debugPanel'), debugGateStatus: $('debugGateStatus'), btnDebugClose: $('btnDebugClose'),
     oledText: $('oledText'), btnOledSend: $('btnOledSend'),
     oledImage: $('oledImage'), oledImagePreview: $('oledImagePreview'), btnOledImageCenter: $('btnOledImageCenter'), oledImageStatus: $('oledImageStatus'),
@@ -273,7 +272,7 @@
   // 状态
   // ------------------------------------------------------------------
   const S = {
-    connected: false, hasWrite: false, demo: false, busy: false,
+    connected: false, hasWrite: false, busy: false,
     viewingHistory: false, timeoutHandling: false, disconnectPending: false,
     phase: 'IDLE',            // IDLE | CAL | RUN | PAUSE | STOPPED
     device: null, notifyChar: null, writeChar: null,
@@ -464,7 +463,7 @@
   }
 
   function refreshButtons() {
-    const c = S.connected || S.demo;
+    const c = S.connected;
     const running = S.phase === 'RUN', paused = S.phase === 'PAUSE', cal = S.phase === 'CAL';
     ui.btnStart.disabled = !c || running || paused || cal;
     ui.btnStart.textContent = (paused || S.phase === 'STOPPED') ? '重新开始测试' : '开始测试';
@@ -482,7 +481,7 @@
     ui.btnOledImageSend.disabled = !S.connected || !S.writeFn || S.busy || !S.oledImageBitmap;
     ui.btnOledImageClear.disabled = !S.oledImageBitmap;
     ui.btnOledImageCenter.disabled = !S.oledImageElement || S.busy;
-    ui.btnOta.disabled = !S.connected || !S.writeFn || S.demo || running || paused || cal || S.busy ||
+    ui.btnOta.disabled = !S.connected || !S.writeFn || running || paused || cal || S.busy ||
       S.ota.running || !ui.otaFile.files || !ui.otaFile.files.length;
     if (S.busy) [ui.btnConn, ui.btnStart, ui.btnStop, ui.btnClear, ui.btnExportBundle, ui.btnPause, ui.btnAnalyze, ui.btnFull, ui.btnLoad, ui.btnOledSend, ui.btnOta].forEach(b => { b.disabled = true; });
   }
@@ -915,7 +914,7 @@
   // 「开始测试」的统一入口：先同步，同步不到再问。
   async function startWithCloudSync() {
     if (S.busy) return;
-    if (!(S.connected || S.demo)) return;
+    if (!S.connected) return;
     if (S.phase === 'RUN' || S.phase === 'CAL' || S.phase === 'PAUSE') return;
     showCloudGate('syncing');
     const cfg = await fetchConsoleConfig();
@@ -928,7 +927,7 @@
 
   async function beginFormalSession() {
     if (S.busy) return;
-    if (!(S.connected || S.demo)) return;
+    if (!S.connected) return;
     if (S.phase === 'RUN' || S.phase === 'CAL' || S.phase === 'PAUSE') return;
     S.busy = true; refreshButtons();
     try {
@@ -1616,7 +1615,7 @@
 
   async function runOta() {
     if (!S.connected || !S.writeFn) throw new Error('请先连接采集设备');
-    if (S.demo || ['CAL', 'RUN', 'PAUSE'].includes(S.phase)) throw new Error('请先结束当前测试');
+    if (['CAL', 'RUN', 'PAUSE'].includes(S.phase)) throw new Error('请先结束当前测试');
     const file = ui.otaFile.files && ui.otaFile.files[0];
     if (!file) throw new Error('请先选择应用 HEX 文件');
 
@@ -1744,7 +1743,6 @@
       await S.notifyChar.startNotifications();
 
       S.connected = true;
-      S.demo = false;
      ui.btnConn.textContent = '断开设备';
      const deviceName = (S.device.name || '').trim();
      const genericName = !deviceName || /^(bt|ble|bluetooth)$/i.test(deviceName);
@@ -1811,7 +1809,7 @@
 
   ui.btnConn.onclick = () => {
     if (S.connected && S.device && S.device.gatt.connected) S.device.gatt.disconnect();
-    else if (S.demo) { stopDemo(); } else connect();
+    else connect();
   };
 
   // ------------------------------------------------------------------
@@ -2244,55 +2242,6 @@
     if (autoOn) sctx.fillText(`跨度 ${(2 * half).toFixed(0)}`, 8, 26);
   }
 
-  // ------------------------------------------------------------------
-  // 演示模式：无硬件也能验证整条链路
-  // ------------------------------------------------------------------
-  let demoTimer = null, demoNextBlink = 0;
-  function startDemo() {
-    if (S.connected) return;
-    S.demo = true;
-    S.viewingHistory = false;
-    resetFilter();
-    S.samples = []; S.lastT = 0;
-    setConnText('演示模式：本地生成 200Hz 合成数据，用于验证滤波、判决与频率分析', true);
-    ui.btnConn.textContent = '退出演示';
-    S.phase = 'IDLE';
-    S.rec = { t: [], raw: [], filt: [], ev: [] };
-    S.recStartMs = 0;
-    const t0 = performance.now();
-    demoTimer = setInterval(() => {
-      const now = performance.now();
-      const t = now - t0;
-      // 基线 2048，叠加慢漂移与噪声
-      let v = 2048 + 40 * Math.sin(t / 4000) + (Math.random() - 0.5) * 26;
-      // 每 3.5 秒左右来一次眨眼，凹陷约 320 counts、宽约 150ms
-      if (t > demoNextBlink) {
-        const dt = t - demoNextBlink;
-        if (dt < 150) {
-          const shape = Math.sin(Math.PI * dt / 150);
-          v -= 320 * shape;
-        } else if (dt > 600) {
-          demoNextBlink = t + 3200 + Math.random() * 900;
-        }
-      }
-      onSample(t, Math.round(clamp(v, 0, 4095)));
-      if (S.phase === 'RUN' || S.phase === 'CAL') updateLiveStats(t);
-    }, 5); // 200Hz
-    demoNextBlink = 800;
-    refreshButtons();
-    ui.help.innerHTML = '演示模式：用于确认页面显示和保存功能，不用于正式测试。';
-  }
-  async function stopDemo() {
-    if (S.session && (S.phase === 'RUN' || S.phase === 'CAL' || S.phase === 'PAUSE')) await stopSession('demo_finished');
-    clearInterval(demoTimer); demoTimer = null;
-    S.demo = false;
-    ui.btnConn.textContent = '连接设备';
-    setConnText('已退出演示模式');
-    S.phase = 'STOPPED';
-    refreshButtons();
-  }
-  ui.btnDemo.onclick = () => { if (S.demo) stopDemo(); else startDemo(); };
-
   // 实时统计刷新：卡片显示最近 30 秒次数，设备镜像仍接收同一时间窗
   // 换算出的次/分。两者都在同一个 tick 更新，暂停不会成为刷新触发条件。
   setInterval(() => {
@@ -2321,7 +2270,7 @@
 
   // 演示模式下 recStartMs 用的是 performance.now 的时间基，实时频率单独处理
   resizeScope(); draw(); refreshButtons(); clearSummary(); refreshSessionList();
-  window.__blink = { S, CFG, onSample, startDemo, analyze, beginFormalSession, exportBundle };
+  window.__blink = { S, CFG, onSample, analyze, beginFormalSession, exportBundle };
 })();
 </script>
 </body>
