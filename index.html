@@ -139,12 +139,12 @@
     <h2>调试台</h2>
     <div class="fields">
       <div class="field"><label>调试入口</label><span class="tiny"></span></div>
-      <div class="field"><label>自动抗干扰等级</label><input id="fMult" type="number" value="2" min="1" max="12" step="0.5"></div>
+      <div class="field"><label>自动抗干扰等级</label><input id="fMult" type="number" value="4" min="1" max="12" step="0.5"></div>
       <div class="field"><label>两次眨眼最短间隔（毫秒）</label><input id="fRefr" type="number" value="300" min="0" step="50"></div>
     </div>
     <div class="fields">
       <div class="field"><label><input id="manualThresholdEnabled" type="checkbox">使用手动抗纹波阈值</label></div>
-      <div class="field"><label>手动阈值（ADC 计数）</label><input id="manualDrop" type="number" value="60" min="18" max="2000" step="1" disabled></div>
+      <div class="field"><label>手动阈值（ADC 计数）</label><input id="manualDrop" type="number" value="60" min="12" max="2000" step="1" disabled></div>
       <div class="field"><label>说明</label><span class="tiny">数值越大越不容易把纹波当作眨眼。</span></div>
     </div>
     <div class="fields">
@@ -212,8 +212,8 @@
     maLength: 8,             // 8 点滑动平均：200Hz 下正好在 25/50/75Hz 零点，顺带压 50Hz
     calibrationMs: 3000,
     calibrationSkipMs: 300,  // 标定开头这段时间的样本不参与阈值计算（见 onSample 里的说明）
-    noiseMultiplier: 2,
-    minDropCounts: 18,
+    noiseMultiplier: 4,
+    minDropCounts: 12,
     releaseRatio: 0.45,      // 回升到凹陷深度的 45% 就算脱离
     minWidthMs: 40,
     maxWidthMs: 800,
