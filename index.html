@@ -312,7 +312,6 @@
     db: null, activeSegment: null, nextEventId: 1,
     quality: { received: 0, saturatedLow: 0, saturatedHigh: 0 },
     clock: { anchorTimeline: null, anchorUtc: null, lastWallOffset: null },
-    demoBlinks: [],
     oledImageBitmap: null, oledImageName: '', oledImageUrl: '', oledImageElement: null,
     oledImageOffsetX: 0, oledImageOffsetY: 0, oledImageGeometry: null, oledImageDrag: null,
     ota: { running: false, waiter: null },
@@ -2268,7 +2267,6 @@
     pushStats();
   }, 500);
 
-  // 演示模式下 recStartMs 用的是 performance.now 的时间基，实时频率单独处理
   resizeScope(); draw(); refreshButtons(); clearSummary(); refreshSessionList();
   window.__blink = { S, CFG, onSample, analyze, beginFormalSession, exportBundle };
 })();
