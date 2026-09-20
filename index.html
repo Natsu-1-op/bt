@@ -232,11 +232,27 @@
       'oledText', 'btnOledSend', 'oledImage', 'oledImagePreview', 'oledImageStatus',
       'btnOledImageCenter', 'btnOledImageSend', 'btnOledImageClear',
       'otaFile', 'btnOta', 'otaStatus']);
+    // 空壳元素必须能当 canvas 用。残留代码里有几处在【加载时】就会画一次预览
+    // （clearOledImagePreview），getContext 一旦返回 null，整个脚本会在加载时抛错，
+    // 后面所有事件绑定都不执行 —— 表现就是"页面打得开，但什么都点不动"。
+    const stubCtx = () => new Proxy({}, {
+      get(t, k) {
+        if (k === 'getImageData') return (x, y, w, h) => ({ data: new Uint8ClampedArray(Math.max(1, w * h * 4)) });
+        if (k === 'measureText') return () => ({ width: 16 });
+        if (k === 'createLinearGradient' || k === 'createRadialGradient') return () => ({ addColorStop() {} });
+        if (k in t) return t[k];
+        return () => {};
+      },
+      set(t, k, v) { t[k] = v; return true; },
+    });
     const stubElement = () => ({
       textContent: '', innerHTML: '', value: '', checked: false, disabled: false, files: null,
+      width: 128, height: 32,
       style: {}, classList: { add() {}, remove() {}, contains() { return false; } },
       addEventListener() {}, removeEventListener() {}, append() {}, appendChild() {},
-      getContext: () => null, onclick: null, oninput: null, onchange: null, onkeydown: null,
+      getContext: () => stubCtx(),
+      getBoundingClientRect: () => ({ width: 0, height: 0, top: 0, left: 0 }),
+      onclick: null, oninput: null, onchange: null, onkeydown: null,
     });
     const $ = (id) => {
       const el = document.getElementById(id);
