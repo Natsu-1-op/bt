@@ -1029,6 +1029,14 @@
   // ------------------------------------------------------------------
   // 控制台配置的上传 / 下载
   // ------------------------------------------------------------------
+  // 当前应该显示在位图。默认文字；点过「发送图片到设备」之后就是图片。
+  function consoleDisplayHex() {
+    try {
+      if (S.displayMode === 'image' && S.oledImageBitmap) return bytesToHex(S.oledImageBitmap);
+      return bytesToHex(renderOledText(ui.oledText.value));
+    } catch (_) { return ''; }
+  }
+
   function consolePayload() {
     const c = currentConfig();
     return {
@@ -1038,6 +1046,8 @@
       manualDropCounts: c.manualDropCounts,
       minDropCounts: c.minDropCounts,
       oledText: ui.oledText && typeof ui.oledText.value === 'string' ? ui.oledText.value : '',
+      // 位图也一起存：测试页连上设备时直接发它，不用在测量页重新渲染。
+      oledBitmap: consoleDisplayHex(),
       updatedAt: Date.now(),
       updatedBy: 'test.html'
     };
@@ -1823,6 +1833,7 @@
       return false;
     }
     saveOledText();
+    S.displayMode = 'text';
     const bitmap = renderOledText(ui.oledText.value);
     if (!silent) setConnText('采集设备已连接，屏幕文字发送中…', true);
     const ok = await queueBleText(`T,${bytesToHex(bitmap)}\n`);
@@ -1840,6 +1851,7 @@
       if (!silent) ui.oledImageStatus.textContent = '请先选择并处理一张图片。';
       return false;
     }
+    S.displayMode = 'image';
     if (!silent) setConnText('采集设备已连接，屏幕图片发送中…', true);
     const ok = await queueBleText(`T,${bytesToHex(S.oledImageBitmap)}\n`);
     if (!silent && ok) {

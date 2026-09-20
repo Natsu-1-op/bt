@@ -924,6 +924,68 @@
   if (ui.cloudStart) ui.cloudStart.onclick = () => { hideCloudGate(); beginFormalSession(); };
   if (ui.cloudCancel) ui.cloudCancel.onclick = hideCloudGate;
 
+  // ------------------------------------------------------------------
+  // 设备显示内容（OLED 第 3、4 行的文字或图片）
+  // ------------------------------------------------------------------
+  // 以前每次都要在控制台手点「发送到设备」。现在连上就自动推一次，
+  // 操作者不用管，设备开机连上就能显示该显示的东西。
+  //
+  // 取值顺序：云端配置 -> 本机缓存 -> 什么都没有就【不发】。
+  // 最后那条很要紧：宁可不发，也不能发一张空位图把设备屏幕刷白。
+  const DISPLAY_CACHE_KEY = 'blink-display-v1';
+  const OLED_BITMAP_BYTES = 512;                       // 128×32 / 8
+  const OLED_BITMAP_HEX_LEN = OLED_BITMAP_BYTES * 2;   // 1024 个 hex 字符
+
+  function isValidDisplayHex(hex) {
+    return typeof hex === 'string' && hex.length === OLED_BITMAP_HEX_LEN && /^[0-9a-fA-F]+$/.test(hex);
+  }
+
+  function readCachedDisplay() {
+    try {
+      const v = JSON.parse(localStorage.getItem(DISPLAY_CACHE_KEY) || 'null');
+      return (v && typeof v === 'object') ? v : null;
+    } catch (_) { return null; }
+  }
+
+  function cacheDisplay(text, bitmapHex) {
+    try {
+      localStorage.setItem(DISPLAY_CACHE_KEY, JSON.stringify({
+        text: typeof text === 'string' ? text : '',
+        bitmapHex: bitmapHex || '',
+        updatedAt: Date.now()
+      }));
+    } catch (_) { /* 存不下不影响显示，下次再取云端 */ }
+  }
+
+  // 连上设备后自动推一次。返回是否真的发了。
+  async function autoPushDisplay() {
+    if (!S.connected || !S.writeFn) return false;
+
+    let disp = null;
+    try {
+      const cfg = await fetchConsoleConfig();
+      if (cfg) {
+        const text = typeof cfg.oledText === 'string' ? cfg.oledText : '';
+        const hex = isValidDisplayHex(cfg.oledBitmap) ? cfg.oledBitmap : '';
+        if (text || hex) disp = { text, bitmapHex: hex };
+      }
+    } catch (_) { /* 没网就走缓存 */ }
+
+    if (!disp) disp = readCachedDisplay();
+    if (!disp) return false;
+
+    let hex = isValidDisplayHex(disp.bitmapHex) ? disp.bitmapHex : '';
+    if (!hex && disp.text) {
+      // 云端只存了文字（例如刚换设备还没选过图）——在本机渲染成位图
+      try { hex = bytesToHex(renderOledText(disp.text)); } catch (_) { hex = ''; }
+    }
+    if (!isValidDisplayHex(hex)) return false;
+
+    cacheDisplay(disp.text, hex);
+    return queueBleText('T,' + hex + '\n');
+  }
+
+
   async function beginFormalSession() {
     if (S.busy) return;
     if (!S.connected) return;
@@ -1751,7 +1813,9 @@
       // 这样现有固件也能在刚连接时显示 Rate: 0/min，不必等图片传完或按暂停。
       if (!S.session && S.shownBpm === null) S.shownBpm = 0;
       pushStats();
-     sendOledText(true).catch(console.error);
+     // 连上就把云端（或本机缓存）里的文字/图片推下去；
+     // 拿不到内容时 autoPushDisplay() 什么都不做，不会刷白屏幕。
+     autoPushDisplay().catch(console.error);
     } catch (err) {
       console.error(err);
       if (S.device && S.device.gatt.connected) S.device.gatt.disconnect();
