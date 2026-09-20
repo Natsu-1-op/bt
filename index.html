@@ -40,6 +40,7 @@
   .scope canvas{width:100%;height:100%;display:block}
   .legend{position:absolute;right:8px;top:8px;background:#07111fdd;border:1px solid var(--line);
           border-radius:6px;padding:6px 8px;color:var(--muted);font-size:10.5px;line-height:1.6;pointer-events:none}
+  .legend label{pointer-events:auto;cursor:pointer;display:inline-flex;align-items:center;gap:4px;user-select:none;color:var(--text)}
   .controls{display:flex;gap:8px;flex-wrap:wrap}
   .controls button{flex:1 1 118px}
   .note{color:var(--muted);font-size:11.5px;line-height:1.6;margin:9px 0 0}
@@ -103,6 +104,7 @@
   <section class="card scope">
     <canvas id="scope"></canvas>
     <div class="legend">
+      <label><input id="autoRange" type="checkbox" checked>纵轴自动量程</label><br>
       绿：处理后波形<br>灰：原始波形<br>红/蓝：识别范围<br>黄线：已识别眨眼
     </div>
   </section>
@@ -215,6 +217,7 @@
     refractoryMs: 300,
     baselineAlpha: 0.0005,   // 极慢基线跟踪，约 10 秒时间常数
     liveWindowMs: 8000,      // 波形显示最近 8 秒
+    autoRangeMinHalf: 16,    // 纵轴自适应时的半幅下限：信号平直时不能把噪声放大成假波形
     realtimeWindowMs: 30000, // 实时频率窗口
     maxRecordMs: 15 * 60 * 1000,
     maxEvents: 5000,
@@ -248,6 +251,7 @@
     fT0: $('fT0'), fT1: $('fT1'), fWin: $('fWin'), fStep: $('fStep'), fMult: $('fMult'), fRefr: $('fRefr'),
     subjectId: $('subjectId'), deviceId: $('deviceId'), operatorId: $('operatorId'), condition: $('condition'),
     manualThresholdEnabled: $('manualThresholdEnabled'), manualDrop: $('manualDrop'), debugReadout: $('debugReadout'),
+    autoRange: $('autoRange'),
     sessionList: $('sessionList'),
     sAvg: $('sAvg'), sCount: $('sCount'), sDur: $('sDur'), sWin: $('sWin')
   };
@@ -276,6 +280,8 @@
     ma: [], maSum: 0,
     cal: [], calStartMs: 0,
     baseline: 0, mad: 0, noise: 1, dropCounts: 0, thDown: 0, thUp: 0,
+    // 波形纵轴量程。center=null 表示还没定过，下一帧直接取当前窗口的值。
+    range: { center: null, half: CFG.adcMax / 2 },
 
     inBlink: false, fallingMs: 0, minInBlink: 0, refractoryUntil: 0,
     count: 0,
@@ -794,6 +800,7 @@
       S.viewingHistory = false; S.recordingStartedAt = performance.now(); S.timeoutHandling = false; S.disconnectPending = false;
       S.lastT = 0; S.lastSampleAt = 0;
       S.baseline = 0; S.mad = 0; S.noise = 1; S.dropCounts = 0; S.thDown = 0; S.thUp = 0;
+      S.range.center = null; S.range.half = CFG.adcMax / 2;
       S.quality = { received: 0, saturatedLow: 0, saturatedHigh: 0 };
       S.clock = { anchorTimeline: null, anchorUtc: null, lastWallOffset: null };
       S.session = {
@@ -1940,6 +1947,7 @@
       S.session = session; S.phase = 'STOPPED'; S.viewingHistory = true; S.samples = []; S.events = []; S.currentChunk = null;
       S.timeoutHandling = false; S.recordingStartedAt = 0; S.lastSampleAt = 0;
       S.baseline = 0; S.mad = 0; S.noise = 1; S.dropCounts = 0; S.thDown = 0; S.thUp = 0;
+      S.range.center = null; S.range.half = CFG.adcMax / 2;
       S.writeError = session.storage_error || null;
       const historyEvents = await readEvents(id);
       S.events = historyEvents.filter(e => e.type === 'blink').map(e => ({ t: e.timeline_ms, amp: e.amplitude_counts, width: e.width_ms }));
@@ -1995,7 +2003,38 @@
 
     const t0 = now - CFG.liveWindowMs, t1 = now;
     const x = t => clamp((t - t0) / (t1 - t0), 0, 1) * W;
-    const y = v => H - clamp(v / CFG.adcMax, 0, 1) * H;
+
+    // ---- 纵轴量程 ----
+    // 固定 0..4095 映射时，只摆几十个计数的信号在 300px 高的画布上不到 4px，看着就是一条直线。
+    // 自适应量程把可见窗口里的处理后波形拉到接近满高。三条约束：
+    //   1) 只用处理后波形（filt）定量程 —— 原始波形毛刺大，让它参与就会把量程撑回去
+    //   2) 放大快、缩小慢 —— 否则每帧跟着噪声抖，波形会不停"呼吸"
+    //   3) 有半幅下限 —— 信号真的平直时，不能把噪声放大成假波形
+    // 纵轴上下两端的数字始终是真实 ADC 计数，所以放大之后不会产生"看着像真信号"的误解。
+    const autoOn = !!(ui.autoRange && ui.autoRange.checked);
+    let center = CFG.adcMax / 2, half = CFG.adcMax / 2;
+    if (autoOn) {
+      let lo = Infinity, hi = -Infinity;
+      for (const p of pts) { const v = p.filt; if (v < lo) lo = v; if (v > hi) hi = v; }
+      if (Number.isFinite(lo) && Number.isFinite(hi)) {
+        const tCenter = (lo + hi) / 2;
+        let tHalf = clamp((hi - lo) / 2 * 1.15, CFG.autoRangeMinHalf, CFG.adcMax / 2);
+        // 原始波形（灰线）毛刺比处理后波形大得多。完全不理会它，灰线会整条跑出画布；
+        // 完全听它的，量程又会被毛刺撑回去、等于白放大。所以最多让它把量程撑宽 2.5 倍。
+        let rLo = Infinity, rHi = -Infinity;
+        for (const p of pts) { const v = p.raw; if (v < rLo) rLo = v; if (v > rHi) rHi = v; }
+        if (Number.isFinite(rLo) && Number.isFinite(rHi)) {
+          tHalf = clamp(Math.max(tHalf, Math.min((rHi - rLo) / 2, tHalf * 2.5)),
+                        CFG.autoRangeMinHalf, CFG.adcMax / 2);
+        }
+        if (S.range.center === null) { S.range.center = tCenter; S.range.half = tHalf; }
+        S.range.center += (tCenter - S.range.center) * 0.12;
+        S.range.half += (tHalf - S.range.half) * (tHalf > S.range.half ? 0.30 : 0.02);
+      }
+      center = S.range.center; half = S.range.half;
+    }
+    // 超出画布的部分交给画布自己裁，这里只把坐标限制在宽松范围内，免得出现天文数字坐标。
+    const y = v => clamp(H - ((v - (center - half)) / (2 * half)) * H, -4 * H, 5 * H);
 
     const trace = (key, color, width, alpha) => {
       sctx.globalAlpha = alpha; sctx.strokeStyle = color; sctx.lineWidth = width;
@@ -2023,8 +2062,9 @@
 
     sctx.fillStyle = '#8ea3bd'; sctx.font = '11px ui-monospace';
     sctx.fillText(`${(CFG.liveWindowMs / 1000).toFixed(0)} s`, 8, H - 8);
-    sctx.fillText('4095', 8, 13);
-    sctx.fillText('0', 8, H - 22);
+    sctx.fillText(`${(center + half).toFixed(0)}`, 8, 13);
+    sctx.fillText(`${(center - half).toFixed(0)}`, 8, H - 22);
+    if (autoOn) sctx.fillText(`跨度 ${(2 * half).toFixed(0)}`, 8, 26);
   }
 
   // ------------------------------------------------------------------
