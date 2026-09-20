@@ -91,8 +91,8 @@
 <main>
   <header>
     <div>
-      <h1 id="appTitle">眨眼测试</h1>
-      <div class="sub">连接设备后，按步骤完成本次测试并保存数据。<span id="debugGateStatus"></span></div>
+      <h1 id="appTitle">调试台</h1>
+      <div class="sub">硬件调试与固件升级。改完点「保存到云端」，测试页每次开始前会读取。<span id="debugGateStatus"></span></div>
     </div>
     <button id="btnConn" class="primary">连接设备</button>
   </header>
@@ -102,6 +102,7 @@
     <span id="conn">请先连接采集设备。</span>
   </section>
 
+  <div class="hidden">
   <section class="grid" style="margin-bottom:10px">
     <div class="metric"><label>状态</label><strong id="mState" class="badc">待机</strong></div>
     <div class="metric"><label>本次眨眼次数</label><strong id="mCount" class="good">0</strong></div>
@@ -143,7 +144,48 @@
     </div>
   </section>
 
+  </div>
 
+  <section id="debugPanel" class="card hidden">
+    <h2>调试台</h2>
+    <div class="fields">
+      <div class="field"><label>调试入口</label><span class="tiny"></span></div>
+      <div class="field"><label>自动抗干扰等级</label><input id="fMult" type="number" value="4" min="1" max="12" step="0.5"></div>
+      <div class="field"><label>两次眨眼最短间隔（毫秒）</label><input id="fRefr" type="number" value="300" min="0" step="50"></div>
+    </div>
+    <div class="fields">
+      <div class="field"><label><input id="manualThresholdEnabled" type="checkbox">使用手动抗纹波阈值</label></div>
+      <div class="field"><label>手动阈值（ADC 计数）</label><input id="manualDrop" type="number" value="60" min="12" max="2000" step="1" disabled></div>
+      <div class="field"><label>说明</label><span class="tiny">数值越大越不容易把纹波当作眨眼。</span></div>
+    </div>
+    <div class="fields">
+      <div class="field"><label>设备屏幕下两行文字</label><textarea id="oledText" rows="2" maxlength="16">眨眼采集</textarea></div>
+      <div class="field"><label>屏幕文字</label><button id="btnOledSend" class="ghost" type="button">发送到设备</button></div>
+      <div class="field"><label>说明</label><span class="tiny">第 1、2 行显示眨眼次数和频率；这里的文字显示在第 3、4 行，按屏幕宽度自动换行，也可以按回车强制换行。</span></div>
+    </div>
+    <p class="tiny">最多输入 16 个字符，每行最多 8 个字，实际显示为 OLED 下两行；文字由手机渲染后传给设备。连接设备后可随时重新发送。</p>
+    <div class="fields">
+      <div class="field"><label>设备屏幕下两行图片</label><input id="oledImage" type="file" accept="image/*"><div class="oled-image-editor"><canvas id="oledImagePreview" class="oled-preview" width="128" height="32" aria-label="OLED图片预览"></canvas><div class="oled-image-tools"><button id="btnOledImageCenter" class="ghost" type="button" disabled>恢复居中</button><span class="tiny">可直接拖动预览调整实际显示位置</span></div></div></div>
+      <div class="field"><label>屏幕图片</label><button id="btnOledImageSend" class="ghost" type="button" disabled>发送图片到设备</button><button id="btnOledImageClear" class="ghost" type="button" disabled>清除图片</button></div>
+      <div class="field"><label>说明</label><span class="tiny">图片会自动等比例缩放并保持完整显示；拖动预览可调整实际 OLED 位置，发送图片后会替换下两行文字。</span></div>
+    </div>
+    <p id="oledImageStatus" class="tiny">尚未选择图片。建议使用黑白、轮廓清晰的图片。</p>
+    <div class="fields">
+      <div class="field"><label>固件升级文件（OTA）</label><input id="otaFile" type="file" accept=".hex,.ihex,text/plain"></div>
+      <div class="field"><label>升级操作</label><button id="btnOta" class="warn" type="button">上传 HEX 并升级</button></div>
+      <div class="field"><label>说明</label><span class="tiny">仅选择已链接到 0x08002000 的应用 HEX；升级时会暂停采集。</span></div>
+    </div>
+    <p id="otaStatus" class="tiny">OTA 默认只在调试台中使用。首次启用前必须先刷入带 Bootloader 的完整固件。</p>
+    <p id="debugReadout" class="note">默认使用自动抗干扰设置。手动阈值仅建议在调试时使用。</p>
+    <div class="row" style="margin-bottom:9px">
+      <button id="btnConsoleSave" class="primary" type="button">保存到云端</button>
+      <button id="btnConsoleLoad" class="ghost" type="button">从云端读取</button>
+      <button id="btnConsoleLogout" class="ghost" type="button">退出</button>
+    </div>
+    <p id="consoleStatus" class="tiny">改完记得点「保存到云端」。测试页每次点开始前会先读这份配置。</p>
+  </section>
+
+  <div class="hidden">
   <section class="card">
     <h2>结果查看（可选）</h2>
     <div class="fields">
@@ -181,6 +223,18 @@
         <button id="cloudStart" class="primary" type="button">直接开始测试</button>
         <button id="cloudCancel" class="ghost" type="button">取消</button>
       </div>
+    </div>
+  </div>
+  </div>
+
+  <div id="loginGate" class="cloud-gate">
+    <div class="cloud-box">
+      <h3>调试台</h3>
+      <p class="tiny" style="margin:0 0 10px">需要管理员密码（与 admin.html 相同）。</p>
+      <input id="loginPass" type="password" autocomplete="current-password" placeholder="管理员密码"
+             style="width:100%;background:#0e1b2d;border:1px solid #2a3f5c;color:var(--text);border-radius:6px;padding:8px;font:inherit;font-size:14px">
+      <p id="loginError" class="tiny" style="color:#ff6679;min-height:16px;margin:6px 0 0"></p>
+      <button id="loginBtn" class="primary" type="button" style="width:100%">进入</button>
     </div>
   </div>
 </main>
@@ -225,26 +279,12 @@
 
   const SERVICE_UUID = 0xffe0;
 
-    // 调试台已经搬到 test.html，index.html 里这些元素不存在了。
-    // 残留的绑定（refreshButtons、updateDebugControls 等）仍然会去碰它们，
-    // 所以这里返回一个什么都不做的空壳，而不是 null —— 否则加载时就会抛。
-    const RETIRED_CONSOLE_IDS = new Set(['fMult', 'fRefr', 'manualThresholdEnabled', 'manualDrop',
-      'debugPanel', 'debugGateStatus', 'btnDebugClose', 'debugReadout',
-      'oledText', 'btnOledSend', 'oledImage', 'oledImagePreview', 'oledImageStatus',
-      'btnOledImageCenter', 'btnOledImageSend', 'btnOledImageClear',
-      'otaFile', 'btnOta', 'otaStatus']);
-    const stubElement = () => ({
-      textContent: '', innerHTML: '', value: '', checked: false, disabled: false, files: null,
-      style: {}, classList: { add() {}, remove() {}, contains() { return false; } },
-      addEventListener() {}, removeEventListener() {}, append() {}, appendChild() {},
-      getContext: () => null, onclick: null, oninput: null, onchange: null, onkeydown: null,
-    });
-    const $ = (id) => document.getElementById(id) || stubElement();
+  const $ = (id) => document.getElementById(id);
   const ui = {
     btnConn: $('btnConn'), btnStart: $('btnStart'), btnPause: $('btnPause'), btnStop: $('btnStop'),
     btnClear: $('btnClear'), btnAnalyze: $('btnAnalyze'),
     btnFull: $('btnFull'), btnDemo: $('btnDemo'), btnLoad: $('btnLoad'), btnExportBundle: $('btnExportBundle'),
-    appTitle: $('appTitle'), debugPanel: $('debugPanel'), debugGateStatus: $('debugGateStatus'), btnDebugClose: $('btnDebugClose'),
+    appTitle: $('appTitle'), debugPanel: $('debugPanel'), debugGateStatus: $('debugGateStatus'), 
     oledText: $('oledText'), btnOledSend: $('btnOledSend'),
     oledImage: $('oledImage'), oledImagePreview: $('oledImagePreview'), btnOledImageCenter: $('btnOledImageCenter'), oledImageStatus: $('oledImageStatus'),
     btnOledImageSend: $('btnOledImageSend'), btnOledImageClear: $('btnOledImageClear'),
@@ -258,6 +298,8 @@
     sessionList: $('sessionList'), btnDeleteSession: $('btnDeleteSession'),
     cloudGate: $('cloudGate'), cloudSpin: $('cloudSpin'), cloudTitle: $('cloudTitle'),
     cloudMsg: $('cloudMsg'), cloudActions: $('cloudActions'), cloudStart: $('cloudStart'), cloudCancel: $('cloudCancel'),
+    loginGate: $('loginGate'), loginPass: $('loginPass'), loginBtn: $('loginBtn'), loginError: $('loginError'),
+    btnConsoleSave: $('btnConsoleSave'), btnConsoleLoad: $('btnConsoleLoad'), btnConsoleLogout: $('btnConsoleLogout'), consoleStatus: $('consoleStatus'),
     sAvg: $('sAvg'), sCount: $('sCount'), sDur: $('sDur'), sWin: $('sWin')
   };
 
@@ -287,10 +329,6 @@
     baseline: 0, mad: 0, noise: 1, dropCounts: 0, thDown: 0, thUp: 0,
     // 波形纵轴量程。center=null 表示还没定过，下一帧直接取当前窗口的值。
     range: { center: null, half: CFG.adcMax / 2 },
-    // 控制台参数。以前从调试台的输入框读，现在调试台搬走了，只留一份内存副本，
-    // 由每次开始测试前的云端同步 applyConsoleConfig() 灌进来。
-    consoleConfig: { noiseMultiplier: CFG.noiseMultiplier, refractoryMs: CFG.refractoryMs,
-                     manualThresholdEnabled: false, manualDropCounts: 60 },
 
     inBlink: false, fallingMs: 0, minInBlink: 0, refractoryUntil: 0,
     count: 0,
@@ -494,12 +532,12 @@
   function currentConfig() {
     return {
       adcMax: CFG.adcMax, sampleRateHz: CFG.sampleRateHz, maLength: CFG.maLength,
-      calibrationMs: CFG.calibrationMs, noiseMultiplier: S.consoleConfig.noiseMultiplier,
+      calibrationMs: CFG.calibrationMs, noiseMultiplier: Number(ui.fMult.value) || CFG.noiseMultiplier,
       minDropCounts: CFG.minDropCounts, releaseRatio: CFG.releaseRatio,
       minWidthMs: CFG.minWidthMs, maxWidthMs: CFG.maxWidthMs,
-      refractoryMs: S.consoleConfig.refractoryMs, baselineAlpha: CFG.baselineAlpha,
-      manualThresholdEnabled: S.consoleConfig.manualThresholdEnabled,
-      manualDropCounts: Math.max(CFG.minDropCounts, S.consoleConfig.manualDropCounts)
+      refractoryMs: Number(ui.fRefr.value) || CFG.refractoryMs, baselineAlpha: CFG.baselineAlpha,
+      manualThresholdEnabled: ui.manualThresholdEnabled.checked,
+      manualDropCounts: Math.max(CFG.minDropCounts, Number(ui.manualDrop.value) || 60)
     };
   }
 
@@ -644,7 +682,11 @@
     startDebugPoll();
   }
 
-  // 调试台已搬到 test.html（密码门在那边）。index.html 不再有任何打开它的入口。
+  let debugPressTimer = null;
+  ui.appTitle.addEventListener('pointerdown', () => { debugPressTimer = setTimeout(openDebugPanel, 1200); });
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach(type => ui.appTitle.addEventListener(type, () => {
+    clearTimeout(debugPressTimer); debugPressTimer = null;
+  }));
   ui.manualThresholdEnabled.onchange = updateDebugControls;
   ui.manualDrop.oninput = updateDebugControls;
   const savedOledText = (() => {
@@ -767,7 +809,6 @@
   ui.oledImagePreview.addEventListener('pointercancel', finishOledImageDrag);
   ui.btnOledImageClear.onclick = clearOledImage;
   clearOledImagePreview();
-  ui.btnDebugClose.onclick = () => lockDebugPanel('');
   setDebugGateStatus('');
   updateDebugControls();
 
@@ -869,20 +910,16 @@
     }
   }
 
-  // 把云端配置收进来。值一律夹到合法范围 —— 云端节点是可写的，
-  // 万一被写进离谱的数，这里必须兜住，不能让判决阈值变成 NaN。
+  // 把云端配置灌进控制台输入框；currentConfig() 仍然从这些输入框取值。
   function applyConsoleConfig(cfg) {
     if (!cfg) return;
-    const num = (v, fallback, lo, hi) => {
-      const n = Number(v);
-      return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : fallback;
-    };
-    S.consoleConfig = {
-      noiseMultiplier: num(cfg.noiseMultiplier, CFG.noiseMultiplier, 1, 12),
-      refractoryMs: num(cfg.refractoryMs, CFG.refractoryMs, 0, 2000),
-      manualThresholdEnabled: !!cfg.manualThresholdEnabled,
-      manualDropCounts: num(cfg.manualDropCounts, 60, CFG.minDropCounts, 2000)
-    };
+    const num = v => (Number.isFinite(Number(v)) ? Number(v) : null);
+    const mult = num(cfg.noiseMultiplier), refr = num(cfg.refractoryMs), manual = num(cfg.manualDropCounts);
+    if (mult !== null && ui.fMult) ui.fMult.value = String(mult);
+    if (refr !== null && ui.fRefr) ui.fRefr.value = String(refr);
+    if (manual !== null && ui.manualDrop) ui.manualDrop.value = String(manual);
+    if (ui.manualThresholdEnabled) ui.manualThresholdEnabled.checked = !!cfg.manualThresholdEnabled;
+    updateDebugControls();
   }
 
   function showCloudGate(mode) {
@@ -916,6 +953,131 @@
 
   if (ui.cloudStart) ui.cloudStart.onclick = () => { hideCloudGate(); beginFormalSession(); };
   if (ui.cloudCancel) ui.cloudCancel.onclick = hideCloudGate;
+
+  // ------------------------------------------------------------------
+  // 调试台登录门
+  // ------------------------------------------------------------------
+  // 密码与 admin.html 完全一致：不写在代码里，而是拿输入去读 admin_auth/<密码>。
+  // 规则是 "$token": { ".read": "data.val() === true" }，所以只有密码正确才读得到，
+  // 猜错的会被数据库直接拒掉 —— 密码本身永远不会出现在这个页面里。
+  const CONSOLE_SESSION_KEY = 'blink-console-auth-v1';
+  const CONSOLE_SESSION_TTL_MS = 30 * 60 * 1000;
+  let consoleLoginFailures = 0, consoleLoginBlockedUntil = 0;
+
+  function consoleSessionValid() {
+    try {
+      const raw = sessionStorage.getItem(CONSOLE_SESSION_KEY);
+      if (!raw) return false;
+      const v = JSON.parse(raw);
+      return v && Number.isFinite(v.expiresAt) && Date.now() < v.expiresAt;
+    } catch (_) { return false; }
+  }
+
+  function showConsole(statusText) {
+    ui.loginGate.classList.add('hidden');
+    ui.debugPanel.classList.remove('hidden');
+    if (statusText && ui.consoleStatus) ui.consoleStatus.textContent = statusText;
+    refreshButtons();
+  }
+
+  function showLogin(message) {
+    ui.debugPanel.classList.add('hidden');
+    ui.loginGate.classList.remove('hidden');
+    ui.loginError.textContent = message || '';
+    if (ui.loginPass) ui.loginPass.value = '';
+  }
+
+  // 成功 true / 密码错 false / 网络问题抛异常
+  async function verifyConsolePassword(pass) {
+    if (!await loadFirebase()) throw new Error('无法连接云端，请检查网络后重试。');
+    if (!window.firebase.apps || !window.firebase.apps.length) window.firebase.initializeApp(FIREBASE_CONFIG);
+    const snap = await withTimeout(
+      window.firebase.database().ref('admin_auth/' + pass).once('value'), CLOUD_SYNC_TIMEOUT_MS);
+    return snap.exists() && snap.val() === true;
+  }
+
+  async function submitConsoleLogin() {
+    if (!ui.loginPass) return;
+    if (Date.now() < consoleLoginBlockedUntil) {
+      ui.loginError.textContent = '尝试过多，请 ' + Math.ceil((consoleLoginBlockedUntil - Date.now()) / 1000) + ' 秒后重试。';
+      return;
+    }
+    const pass = ui.loginPass.value.trim();
+    if (!pass) { ui.loginError.textContent = '请输入密码。'; return; }
+    if (pass.length > 128 || /[.#$/[]]/.test(pass)) { ui.loginError.textContent = '密码格式不合法。'; return; }
+    ui.loginBtn.disabled = true; ui.loginError.textContent = '正在校验…';
+    try {
+      if (await verifyConsolePassword(pass)) {
+        consoleLoginFailures = 0;
+        try { sessionStorage.setItem(CONSOLE_SESSION_KEY, JSON.stringify({ expiresAt: Date.now() + CONSOLE_SESSION_TTL_MS })); } catch (_) {}
+        showConsole('已登录。改完记得点「保存到云端」。');
+        loadConsoleConfigFromCloud().catch(() => {});
+        return;
+      }
+      consoleLoginFailures++;
+      if (consoleLoginFailures >= 5) consoleLoginBlockedUntil = Date.now() + 60000;
+      ui.loginError.textContent = '密码不对。' + (consoleLoginFailures >= 5 ? '尝试过多，请 60 秒后重试。' : '');
+      ui.loginPass.value = '';
+    } catch (err) {
+      ui.loginError.textContent = (err && err.message) || '校验失败，请重试。';
+    } finally { ui.loginBtn.disabled = false; }
+  }
+
+  function consoleLogout() {
+    try { sessionStorage.removeItem(CONSOLE_SESSION_KEY); } catch (_) {}
+    showLogin('已退出。');
+  }
+
+  // ------------------------------------------------------------------
+  // 控制台配置的上传 / 下载
+  // ------------------------------------------------------------------
+  function consolePayload() {
+    const c = currentConfig();
+    return {
+      noiseMultiplier: c.noiseMultiplier,
+      refractoryMs: c.refractoryMs,
+      manualThresholdEnabled: !!c.manualThresholdEnabled,
+      manualDropCounts: c.manualDropCounts,
+      oledText: ui.oledText && typeof ui.oledText.value === 'string' ? ui.oledText.value : '',
+      updatedAt: Date.now(),
+      updatedBy: 'test.html'
+    };
+  }
+
+  async function saveConsoleConfigToCloud() {
+    if (!await loadFirebase()) throw new Error('无法连接云端，请检查网络。');
+    if (!window.firebase.apps || !window.firebase.apps.length) window.firebase.initializeApp(FIREBASE_CONFIG);
+    const payload = consolePayload();
+    await withTimeout(window.firebase.database().ref(CONSOLE_CONFIG_PATH).set(payload), CLOUD_SYNC_TIMEOUT_MS);
+    return payload;
+  }
+
+  async function loadConsoleConfigFromCloud() {
+    const cfg = await fetchConsoleConfig();
+    if (!cfg) throw new Error('云端没有配置，或读不到。');
+    applyConsoleConfig(cfg);
+    return cfg;
+  }
+
+  if (ui.loginBtn) ui.loginBtn.onclick = () => { submitConsoleLogin().catch(err => console.error(err)); };
+  if (ui.loginPass) ui.loginPass.onkeydown = e => { if (e.key === 'Enter') submitConsoleLogin().catch(err => console.error(err)); };
+  if (ui.btnConsoleLogout) ui.btnConsoleLogout.onclick = consoleLogout;
+  if (ui.btnConsoleSave) ui.btnConsoleSave.onclick = () => {
+    ui.consoleStatus.textContent = '正在保存…';
+    saveConsoleConfigToCloud().then(p => {
+      const t = new Date(p.updatedAt).toLocaleTimeString();
+      ui.consoleStatus.textContent = '已保存到云端（' + t + '）：等级 ' + p.noiseMultiplier + '、间隔 ' + p.refractoryMs + ' ms。';
+    }).catch(err => { ui.consoleStatus.textContent = '保存失败：' + ((err && err.message) || err); });
+  };
+  if (ui.btnConsoleLoad) ui.btnConsoleLoad.onclick = () => {
+    ui.consoleStatus.textContent = '正在读取…';
+    loadConsoleConfigFromCloud().then(cfg => {
+      ui.consoleStatus.textContent = '已从云端读取：等级 ' + cfg.noiseMultiplier + '、间隔 ' + cfg.refractoryMs + ' ms。';
+    }).catch(err => { ui.consoleStatus.textContent = '读取失败：' + ((err && err.message) || err); });
+  };
+
+  // 进来就先看有没有还没过期的登录会话
+  if (consoleSessionValid()) showConsole(''); else showLogin('');
 
   async function beginFormalSession() {
     if (S.busy) return;
