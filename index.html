@@ -41,6 +41,14 @@
   .legend{position:absolute;right:8px;top:8px;background:#07111fdd;border:1px solid var(--line);
           border-radius:6px;padding:6px 8px;color:var(--muted);font-size:10.5px;line-height:1.6;pointer-events:none}
   .legend label{pointer-events:auto;cursor:pointer;display:inline-flex;align-items:center;gap:4px;user-select:none;color:var(--text)}
+  .cloud-gate{position:fixed;inset:0;background:#03070ddd;display:flex;align-items:center;justify-content:center;z-index:50;padding:20px}
+  .cloud-box{background:#0b1524;border:1px solid var(--line);border-radius:12px;padding:20px 22px;max-width:360px;width:100%;text-align:center}
+  .cloud-box h3{margin:0 0 8px;font-size:16px;color:var(--text)}
+  .cloud-spin{width:28px;height:28px;margin:2px auto 14px;border:3px solid #24405f;border-top-color:#38d996;border-radius:50%;animation:cloudspin .9s linear infinite}
+  @keyframes cloudspin{to{transform:rotate(360deg)}}
+  .cloud-actions{display:none;gap:8px;margin-top:14px}
+  .cloud-actions.show{display:flex}
+  .cloud-actions button{flex:1 1 0}
   .controls{display:flex;gap:8px;flex-wrap:wrap}
   .controls button{flex:1 1 118px}
   .note{color:var(--muted);font-size:11.5px;line-height:1.6;margin:9px 0 0}
@@ -197,6 +205,17 @@
   </section>
 
   <p class="tiny"><button id="btnDemo" class="ghost" style="margin-top:8px;padding:6px 10px;font-size:12px">演示模式（无设备）</button></p>
+  <div id="cloudGate" class="cloud-gate hidden">
+    <div class="cloud-box">
+      <div id="cloudSpin" class="cloud-spin"></div>
+      <h3 id="cloudTitle">正在云端同步…</h3>
+      <p id="cloudMsg" class="note" style="margin:0">正在获取控制台设置，请稍候。</p>
+      <div id="cloudActions" class="cloud-actions">
+        <button id="cloudStart" class="primary" type="button">直接开始测试</button>
+        <button id="cloudCancel" class="ghost" type="button">取消</button>
+      </div>
+    </div>
+  </div>
 </main>
 
 <script>
@@ -256,6 +275,8 @@
     manualThresholdEnabled: $('manualThresholdEnabled'), manualDrop: $('manualDrop'), debugReadout: $('debugReadout'),
     autoRange: $('autoRange'),
     sessionList: $('sessionList'), btnDeleteSession: $('btnDeleteSession'),
+    cloudGate: $('cloudGate'), cloudSpin: $('cloudSpin'), cloudTitle: $('cloudTitle'),
+    cloudMsg: $('cloudMsg'), cloudActions: $('cloudActions'), cloudStart: $('cloudStart'), cloudCancel: $('cloudCancel'),
     sAvg: $('sAvg'), sCount: $('sCount'), sDur: $('sDur'), sWin: $('sWin')
   };
 
@@ -801,6 +822,115 @@
     persistEvent(event);
     return event;
   }
+
+  // ------------------------------------------------------------------
+  // 云端同步（每次开始测试前走一遍）
+  // ------------------------------------------------------------------
+  // 控制台配置由 test.html 维护，存在 Firebase Realtime Database 里。
+  // 这里是只读方：拉到了就用，拉不到就问用户要不要直接用本机设置开始。
+  const FIREBASE_CONFIG = {
+    apiKey: 'AIzaSyB6EbZElw7ahDN5rOK-keWlgr9JInVbnN4',
+    authDomain: 'class-optic.firebaseapp.com',
+    projectId: 'class-optic',
+    storageBucket: 'class-optic.firebasestorage.app',
+    messagingSenderId: '859111669333',
+    appId: '1:859111669333:web:ec5cea5bd22dc0c495dedc',
+    databaseURL: 'https://class-optic-default-rtdb.asia-southeast1.firebasedatabase.app'
+  };
+  const CONSOLE_CONFIG_PATH = 'blinkConsole/config';
+  const CLOUD_SYNC_TIMEOUT_MS = 8000;
+
+  let firebaseLoader = null;
+
+  // 按需加载 Firebase SDK。刻意不做成 <script src>：
+  // 没网时静态 script 会拖慢甚至卡住页面，而这是个要在诊室里用的测试页，
+  // 断网也必须能立刻打开。超时就当没网处理。
+  function loadFirebase() {
+    if (window.firebase && window.firebase.database) return Promise.resolve(true);
+    if (firebaseLoader) return firebaseLoader;
+    firebaseLoader = new Promise(resolve => {
+      let settled = false;
+      const finish = ok => { if (!settled) { settled = true; resolve(ok); } };
+      const addScript = (src, onDone) => {
+        const el = document.createElement('script');
+        el.src = src; el.async = true;
+        el.onload = onDone; el.onerror = () => finish(false);
+        document.head.appendChild(el);
+      };
+      addScript('https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js', () => {
+        addScript('https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js', () => finish(true));
+      });
+      setTimeout(() => finish(false), CLOUD_SYNC_TIMEOUT_MS);
+    });
+    return firebaseLoader;
+  }
+
+  function withTimeout(promise, ms) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('云端请求超时')), ms);
+      Promise.resolve(promise).then(v => { clearTimeout(timer); resolve(v); },
+                                  e => { clearTimeout(timer); reject(e); });
+    });
+  }
+
+  // 成功返回配置对象；没网 / 超时 / 节点不存在都返回 null。
+  async function fetchConsoleConfig() {
+    if (!await loadFirebase()) return null;
+    try {
+      if (!window.firebase.apps || !window.firebase.apps.length) window.firebase.initializeApp(FIREBASE_CONFIG);
+      const snap = await withTimeout(window.firebase.database().ref(CONSOLE_CONFIG_PATH).once('value'), CLOUD_SYNC_TIMEOUT_MS);
+      const value = snap.val();
+      if (!value || typeof value !== 'object') return null;
+      return value;
+    } catch (err) {
+      console.warn('云端同步失败：', err && err.message ? err.message : err);
+      return null;
+    }
+  }
+
+  // 把云端配置灌进控制台输入框；currentConfig() 仍然从这些输入框取值。
+  function applyConsoleConfig(cfg) {
+    if (!cfg) return;
+    const num = v => (Number.isFinite(Number(v)) ? Number(v) : null);
+    const mult = num(cfg.noiseMultiplier), refr = num(cfg.refractoryMs), manual = num(cfg.manualDropCounts);
+    if (mult !== null && ui.fMult) ui.fMult.value = String(mult);
+    if (refr !== null && ui.fRefr) ui.fRefr.value = String(refr);
+    if (manual !== null && ui.manualDrop) ui.manualDrop.value = String(manual);
+    if (ui.manualThresholdEnabled) ui.manualThresholdEnabled.checked = !!cfg.manualThresholdEnabled;
+    updateDebugControls();
+  }
+
+  function showCloudGate(mode) {
+    if (!ui.cloudGate) return;
+    ui.cloudGate.classList.remove('hidden');
+    if (mode === 'syncing') {
+      ui.cloudSpin.style.display = '';
+      ui.cloudTitle.textContent = '正在云端同步…';
+      ui.cloudMsg.textContent = '正在获取控制台设置，请稍候。';
+      ui.cloudActions.classList.remove('show');
+    } else {
+      ui.cloudSpin.style.display = 'none';
+      ui.cloudTitle.textContent = '无法连接云端';
+      ui.cloudMsg.textContent = '拉取不到控制台设置，可能没有网络。要用本机当前的设置直接开始测试吗？';
+      ui.cloudActions.classList.add('show');
+    }
+  }
+
+  function hideCloudGate() { if (ui.cloudGate) ui.cloudGate.classList.add('hidden'); }
+
+  // 「开始测试」的统一入口：先同步，同步不到再问。
+  async function startWithCloudSync() {
+    if (S.busy) return;
+    if (!(S.connected || S.demo)) return;
+    if (S.phase === 'RUN' || S.phase === 'CAL' || S.phase === 'PAUSE') return;
+    showCloudGate('syncing');
+    const cfg = await fetchConsoleConfig();
+    if (cfg) { applyConsoleConfig(cfg); hideCloudGate(); beginFormalSession(); return; }
+    showCloudGate('offline');
+  }
+
+  if (ui.cloudStart) ui.cloudStart.onclick = () => { hideCloudGate(); beginFormalSession(); };
+  if (ui.cloudCancel) ui.cloudCancel.onclick = hideCloudGate;
 
   async function beginFormalSession() {
     if (S.busy) return;
@@ -1693,7 +1823,7 @@
   // ------------------------------------------------------------------
   // 按钮
   // ------------------------------------------------------------------
-  ui.btnStart.onclick = () => { beginFormalSession(); };
+  ui.btnStart.onclick = () => { startWithCloudSync().catch(err => { console.error(err); hideCloudGate(); }); };
   ui.btnPause.onclick = () => {
     if (S.busy || !S.session) return;
     if (S.phase === 'RUN') {
