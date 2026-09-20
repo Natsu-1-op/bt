@@ -946,9 +946,12 @@
   // 以前每次都要在控制台手点「发送到设备」。现在连上就自动推一次，
   // 操作者不用管，设备开机连上就能显示该显示的东西。
   //
-  // 取值顺序：云端配置 -> 本机缓存 -> 什么都没有就【不发】。
-  // 最后那条很要紧：宁可不发，也不能发一张空位图把设备屏幕刷白。
+  // 取值顺序：云端配置 -> 本机缓存 -> 默认文字。
+  // 只有「渲染不出任何有效位图」时才不发（那种情况下发出去反而会刷白屏幕）。
   const DISPLAY_CACHE_KEY = 'blink-display-v1';
+  // 云端和缓存都没有时的兜底。固件里 g_oled_text_bitmap 是全零数组，
+  // 开机第 3、4 行本来就是空白 —— 什么都不发的话屏幕永远空着。
+  const DEFAULT_DISPLAY_TEXT = '眨眼采集';
   const OLED_BITMAP_BYTES = 512;                       // 128×32 / 8
   const OLED_BITMAP_HEX_LEN = OLED_BITMAP_BYTES * 2;   // 1024 个 hex 字符
 
@@ -988,7 +991,9 @@
     } catch (_) { /* 没网就走缓存 */ }
 
     if (!disp) disp = readCachedDisplay();
-    if (!disp) return false;
+    // 兜底到默认文字。这里刻意不是「什么都没有就不发」——
+    // 那样虽然不会刷白屏幕，但也永远不显示，等于这个功能没做。
+    if (!disp) disp = { text: DEFAULT_DISPLAY_TEXT, bitmapHex: '' };
 
     let hex = isValidDisplayHex(disp.bitmapHex) ? disp.bitmapHex : '';
     if (!hex && disp.text) {
