@@ -150,6 +150,8 @@
     <h2>调试台</h2>
     <div class="fields">
       <div class="field"><label>最小判定阈值（ADC 计数）</label><input id="fMinDrop" type="number" value="12" min="5" max="200" step="1"><span class="tiny">信号干净时才降得下来；低于自动阈值时不起作用</span></div>
+      <div class="field"><label><input id="fBlinkCal" type="checkbox">开启现场眨眼标定</label><span class="tiny">每次开始测试先请受试者眨 5 次，用真实眨眼深度定阈值。需要培训操作者，默认关闭。</span></div>
+      <div class="field"><label>标定深度比例</label><input id="fBlinkCalRatio" type="number" value="0.6" min="0.2" max="1" step="0.05"><span class="tiny">阈值 = 标定到的最小眨眼深度 × 这个比例。越大越保守。</span></div>
       <div class="field"><label>自动抗干扰等级</label><input id="fMult" type="number" value="4" min="1" max="12" step="0.5"></div>
       <div class="field"><label>两次眨眼最短间隔（毫秒）</label><input id="fRefr" type="number" value="300" min="0" step="50"></div>
     </div>
@@ -291,6 +293,7 @@
     dot: $('dot'), conn: $('conn'), help: $('help'),
     mState: $('mState'), mCount: $('mCount'), mBpm: $('mBpm'), mLast: $('mLast'),
     fT0: $('fT0'), fT1: $('fT1'), fWin: $('fWin'), fStep: $('fStep'), fMult: $('fMult'), fRefr: $('fRefr'), fMinDrop: $('fMinDrop'),
+    fBlinkCal: $('fBlinkCal'), fBlinkCalRatio: $('fBlinkCalRatio'),
     subjectId: $('subjectId'), deviceId: $('deviceId'), operatorId: $('operatorId'), condition: $('condition'),
     manualThresholdEnabled: $('manualThresholdEnabled'), manualDrop: $('manualDrop'), debugReadout: $('debugReadout'),
     autoRange: $('autoRange'),
@@ -532,6 +535,7 @@
       adcMax: CFG.adcMax, sampleRateHz: CFG.sampleRateHz, maLength: CFG.maLength,
       calibrationMs: CFG.calibrationMs, noiseMultiplier: Number(ui.fMult.value) || CFG.noiseMultiplier,
       minDropCounts: Number(ui.fMinDrop.value) || CFG.minDropCounts, releaseRatio: CFG.releaseRatio,
+      blinkCalEnabled: !!ui.fBlinkCal.checked, blinkCalRatio: Number(ui.fBlinkCalRatio.value) || CFG.blinkCalRatio,
       minWidthMs: CFG.minWidthMs, maxWidthMs: CFG.maxWidthMs,
       refractoryMs: Number(ui.fRefr.value) || CFG.refractoryMs, baselineAlpha: CFG.baselineAlpha,
       manualThresholdEnabled: ui.manualThresholdEnabled.checked,
@@ -1045,6 +1049,7 @@
       manualThresholdEnabled: !!c.manualThresholdEnabled,
       manualDropCounts: c.manualDropCounts,
       minDropCounts: c.minDropCounts,
+      blinkCalEnabled: c.blinkCalEnabled, blinkCalRatio: c.blinkCalRatio,
       oledText: ui.oledText && typeof ui.oledText.value === 'string' ? ui.oledText.value : '',
       // 位图也一起存：测试页连上设备时直接发它，不用在测量页重新渲染。
       oledBitmap: consoleDisplayHex(),

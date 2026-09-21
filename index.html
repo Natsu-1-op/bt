@@ -199,6 +199,18 @@
     maLength: 8,             // 8 点滑动平均：200Hz 下正好在 25/50/75Hz 零点，顺带压 50Hz
     calibrationMs: 3000,
     calibrationSkipMs: 300,  // 标定开头这段时间的样本不参与阈值计算（见 onSample 里的说明）
+    // ---- 现场眨眼标定（方案 C）----
+    // 只靠噪声推算阈值，在信号很干净时会过于保守：实测某段 σ=1.00，阈值却被定成 12（=12σ），
+    // 受试者浅浅的眨眼就检不出来。这一步直接量「这个受试者此刻真实的眨眼有多深」。
+    // 默认关闭：需要操作者配合，培训好之前在调试台里保持关闭。
+    blinkCalRatio: 0.6,             // 阈值 = 标定到的最小眨眼深度 × 这个比例
+    blinkCalTarget: 5,              // 目标眨眼次数
+    blinkCalMinAccepted: 3,         // 至少记录到这么多次才采信，否则退回噪声法
+    blinkCalMaxMs: 20000,           // 超时（毫秒），避免一直等
+    blinkCalMinWidthMs: 100,        // 候选眨眼的最小宽度：真眨眼一般 >=100ms，窄脉冲是噪声
+    blinkCalProvisionalSigma: 2.5,  // 标定期间用的临时阈值倍数，要比正式灵敏，否则量不到浅眨眼
+    blinkCalProvisionalFloor: 6,    // 临时阈值的固定下限（刻意很小，不能借用 minDropCounts）
+    blinkCalNoiseGuardSigma: 4,     // 最终阈值的噪声下限：低于 4σ 的东西无论如何不检
     noiseMultiplier: 4,
     minDropCounts: 12,
     releaseRatio: 0.45,      // 回升到凹陷深度的 45% 就算脱离
@@ -313,10 +325,13 @@
     baseline: 0, mad: 0, noise: 1, dropCounts: 0, thDown: 0, thUp: 0,
     // 波形纵轴量程。center=null 表示还没定过，下一帧直接取当前窗口的值。
     range: { center: null, half: CFG.adcMax / 2 },
+    // 现场眨眼标定的中间状态
+    blinkCal: { depths: [], startMs: null },
     // 控制台参数。以前从调试台的输入框读，现在调试台搬走了，只留一份内存副本，
     // 由每次开始测试前的云端同步 applyConsoleConfig() 灌进来。
     consoleConfig: { noiseMultiplier: CFG.noiseMultiplier, refractoryMs: CFG.refractoryMs,
-                     manualThresholdEnabled: false, manualDropCounts: 60, minDropCounts: CFG.minDropCounts },
+                     manualThresholdEnabled: false, manualDropCounts: 60, minDropCounts: CFG.minDropCounts,
+                     blinkCalEnabled: false, blinkCalRatio: CFG.blinkCalRatio },
 
     inBlink: false, fallingMs: 0, minInBlink: 0, refractoryUntil: 0,
     count: 0,
@@ -482,7 +497,8 @@
 
   function refreshButtons() {
     const c = S.connected;
-    const running = S.phase === 'RUN', paused = S.phase === 'PAUSE', cal = S.phase === 'CAL';
+    const running = S.phase === 'RUN', paused = S.phase === 'PAUSE',
+          cal = S.phase === 'CAL' || S.phase === 'BLINKCAL';
     ui.btnStart.disabled = !c || running || paused || cal;
     ui.btnStart.textContent = (paused || S.phase === 'STOPPED') ? '重新开始测试' : '开始测试';
     ui.btnPause.disabled = !(running || paused);
@@ -537,6 +553,7 @@
       calibrationMs: CFG.calibrationMs, calibrationSkipMs: CFG.calibrationSkipMs,
       noiseMultiplier: S.consoleConfig.noiseMultiplier,
       minDropCounts: S.consoleConfig.minDropCounts, releaseRatio: CFG.releaseRatio,
+      blinkCalEnabled: S.consoleConfig.blinkCalEnabled, blinkCalRatio: S.consoleConfig.blinkCalRatio,
       minWidthMs: CFG.minWidthMs, maxWidthMs: CFG.maxWidthMs,
       refractoryMs: S.consoleConfig.refractoryMs, baselineAlpha: CFG.baselineAlpha,
       manualThresholdEnabled: S.consoleConfig.manualThresholdEnabled,
@@ -923,7 +940,9 @@
       refractoryMs: num(cfg.refractoryMs, CFG.refractoryMs, 0, 2000),
       manualThresholdEnabled: !!cfg.manualThresholdEnabled,
       manualDropCounts: num(cfg.manualDropCounts, 60, CFG.minDropCounts, 2000),
-      minDropCounts: num(cfg.minDropCounts, CFG.minDropCounts, 5, 200)
+      minDropCounts: num(cfg.minDropCounts, CFG.minDropCounts, 5, 200),
+      blinkCalEnabled: !!cfg.blinkCalEnabled,
+      blinkCalRatio: num(cfg.blinkCalRatio, CFG.blinkCalRatio, 0.2, 1)
     };
   }
 
@@ -949,7 +968,7 @@
   async function startWithCloudSync() {
     if (S.busy) return;
     if (!S.connected) return;
-    if (S.phase === 'RUN' || S.phase === 'CAL' || S.phase === 'PAUSE') return;
+    if (S.phase === 'RUN' || S.phase === 'CAL' || S.phase === 'BLINKCAL' || S.phase === 'PAUSE') return;
     showCloudGate('syncing');
     const cfg = await fetchConsoleConfig();
     if (cfg) { applyConsoleConfig(cfg); hideCloudGate(); beginFormalSession(); return; }
@@ -1029,7 +1048,7 @@
   async function beginFormalSession() {
     if (S.busy) return;
     if (!S.connected) return;
-    if (S.phase === 'RUN' || S.phase === 'CAL' || S.phase === 'PAUSE') return;
+    if (S.phase === 'RUN' || S.phase === 'CAL' || S.phase === 'BLINKCAL' || S.phase === 'PAUSE') return;
     S.busy = true; refreshButtons();
     try {
       await openDb();
@@ -1072,6 +1091,85 @@
         stopSession('bluetooth_disconnected').catch(console.error);
       }
     }
+  }
+
+  // ------------------------------------------------------------------
+  // 现场眨眼标定（方案 C）
+  // ------------------------------------------------------------------
+  // 为什么需要：只靠噪声推算阈值，在信号干净时会过于保守 ——
+  // 实测某段 σ=1.00，阈值却被手动定成 12（=12σ），而噪声最大才到 4σ，
+  // 于是"人眼看得见、机器检不出"。这一步直接量这次这个受试者真实的眨眼有多深。
+  //
+  // 四条设计约束：
+  //   1. 标定期间用【更灵敏】的临时阈值 —— 否则连浅眨眼都量不到，标定就白做了
+  //   2. 候选还要过宽度关（>=blinkCalMinWidthMs）—— 临时阈值调低后窄脉冲也会越线
+  //   3. 去掉最大的 20% 再取最小值 —— 避免一次特别大的眨眼或深呼吸把阈值定得过低
+  //   4. 记不到足够次数就【自动退回】噪声法 —— 绝不能让流程卡住等在那里
+  function startBlinkCalibration() {
+    const config = S.session ? S.session.config : currentConfig();
+    S.phase = 'BLINKCAL';
+    S.blinkCal = { depths: [], startMs: S.lastT };
+    S.inBlink = false;
+    S.refractoryUntil = S.lastT + config.refractoryMs;
+    // ⚠️ 这里必须用一个【小的固定下限】，绝不能带 CFG.minDropCounts：
+    //    带上它临时阈值就等于正式阈值了，浅眨眼根本量不到，标定白做。
+    const provisional = Math.max(CFG.blinkCalProvisionalFloor, S.noise * CFG.blinkCalProvisionalSigma);
+    S.dropCounts = provisional;
+    S.thDown = S.baseline - provisional;
+    S.thUp = S.baseline - provisional * config.releaseRatio;
+    setState('眨眼标定', 'warnc');
+    updateBlinkCalPrompt();
+    refreshButtons();
+  }
+
+  function updateBlinkCalPrompt() {
+    const got = S.blinkCal.depths.length;
+    ui.help.textContent = `请让受试者正常眨眼 ${CFG.blinkCalTarget} 次（已记录 ${got}/${CFG.blinkCalTarget}）。`
+      + `用真实眨眼深度来定阈值，浅的眨眼才不会被漏掉；不眨也没关系，${Math.round(CFG.blinkCalMaxMs / 1000)} 秒后自动按噪声定。`;
+  }
+
+  function finishBlinkCal(reason) {
+    const config = S.session ? S.session.config : currentConfig();
+    const d = S.blinkCal.depths.slice().sort((a, b) => a - b);
+    const n = d.length;
+    let drop, note;
+    if (n >= CFG.blinkCalMinAccepted) {
+      // 取第 20 百分位，而不是"直接取最小值"。
+      // 原因：候选里可能混进一个恰好很浅的伪迹（宽度关只是降低概率，不是消灭）。
+      // 一旦最小值被它拉低，阈值就崩了 → 满屏误检，比漏检更难收拾。
+      // 取第 20 百分位等价于"忽略最小的那 1 个"，抗单个离群点，代价只是稍微保守一点。
+      const idx = Math.min(n - 1, Math.floor(n * 0.2));
+      const minDepth = d[idx];
+      const fromBlink = minDepth * config.blinkCalRatio;
+      const fromNoise = S.noise * CFG.blinkCalNoiseGuardSigma;
+      // ⚠️ 这里刻意【不】带 CFG.minDropCounts：带上它阈值就永远降不到 minDropCounts
+      //    以下，而"能降下去"正是这个功能存在的理由。
+      //    安全性由 fromNoise（4σ）兜住 —— S.noise 有下限 1，所以阈值一定 >= 4。
+      drop = Math.max(fromBlink, fromNoise);
+      note = `眨眼标定完成：记录 ${n} 次，参考深度 ${minDepth}（第20百分位）；深度法 ${Math.round(fromBlink)}、`
+           + `噪声下限 ${Math.round(fromNoise)} → 阈值取 ${Math.round(drop)}`;
+    } else {
+      drop = Math.max(CFG.minDropCounts, S.noise * config.noiseMultiplier);
+      note = `眨眼标定只记录到 ${n} 次（需要 ${CFG.blinkCalMinAccepted} 次），已退回按噪声定阈值 ${Math.round(drop)}`;
+    }
+    S.dropCounts = drop;
+    S.thDown = S.baseline - drop;
+    S.thUp = S.baseline - drop * config.releaseRatio;
+    S.inBlink = false;
+    S.refractoryUntil = S.lastT + config.refractoryMs;
+    S.phase = 'RUN';
+    if (S.session) {
+      S.session.blink_calibration = {
+        enabled: true, reason: reason || 'done', depths: d, accepted: n,
+        threshold: drop, noise_sigma: S.noise, note
+      };
+      addEvent('blink_calibration_done', S.lastT, sampleUtc(S.lastT, Date.now()),
+               { accepted: n, threshold: Math.round(drop), reason: reason || 'done' });
+      persistSession();
+    }
+    setState('计数中', 'good');
+    ui.help.textContent = note + '。测试中：黄色竖线表示已识别的眨眼。';
+    refreshButtons();
   }
 
   function finishCalibration() {
@@ -1123,6 +1221,9 @@
     setState('计数中', 'good');
     ui.help.innerHTML = '测试中：黄色竖线表示已识别的眨眼。若波形明显异常，请结束本次测试后重新开始。';
     refreshButtons();
+    // 方案 C：噪声法标定完，若开启了现场眨眼标定，再量一次受试者真实的眨眼深度。
+    // 注意是【之后】调用 —— 上面那套噪声法结果已经落进 S.session.detector，两条路都留痕。
+    if (config.blinkCalEnabled) startBlinkCalibration();
     if (!ui.debugPanel.classList.contains('hidden')) {
       ui.debugReadout.textContent = `基线 ${base.toFixed(0)}；当前下降阈值 ${S.thDown.toFixed(0)}；${config.manualThresholdEnabled ? `手动抗纹波阈值 ${config.manualDropCounts} ADC 计数。` : '自动抗干扰设置。'}`;
     }
@@ -1150,15 +1251,30 @@
 
       if (filt > S.thUp) {
         if (width >= config.minWidthMs && width <= config.maxWidthMs) {
-          setBlinkCount(S.count + 1);
-          const ev = { t: S.fallingMs, utcMs: sampleUtc(S.fallingMs, Date.now()), amp: Math.round(S.baseline - S.minInBlink), width };
-          S.events.push(ev);
-          if (S.events.length > CFG.maxEvents) S.events.shift();
-          S.rec.ev.push(ev);
-          addEvent('blink', ev.t, ev.utcMs, { amplitude_counts: ev.amp, width_ms: width, algorithm: 'web-live-v1' });
-          ui.mLast.textContent = `${width.toFixed(0)} ms / ${ev.amp}`;
-          updateLiveStats(t);
-          pushStats();             // 事件写入后再同步，避免设备端落后一次眨眼
+          const amp = Math.round(S.baseline - S.minInBlink);
+          if (S.phase === 'BLINKCAL') {
+            // 现场眨眼标定：只记深度，不计入正式计数、不写事件。
+            // 宽度再卡一道 —— 临时阈值调低了，窄脉冲噪声也会越过它。
+            if (width >= CFG.blinkCalMinWidthMs) {
+              S.blinkCal.depths.push(amp);
+              updateBlinkCalPrompt();
+              if (S.blinkCal.depths.length >= CFG.blinkCalTarget) {
+                S.refractoryUntil = t + refr; S.inBlink = false;
+                finishBlinkCal('target_reached');
+                return;
+              }
+            }
+          } else {
+            setBlinkCount(S.count + 1);
+            const ev = { t: S.fallingMs, utcMs: sampleUtc(S.fallingMs, Date.now()), amp, width };
+            S.events.push(ev);
+            if (S.events.length > CFG.maxEvents) S.events.shift();
+            S.rec.ev.push(ev);
+            addEvent('blink', ev.t, ev.utcMs, { amplitude_counts: ev.amp, width_ms: width, algorithm: 'web-live-v1' });
+            ui.mLast.textContent = `${width.toFixed(0)} ms / ${ev.amp}`;
+            updateLiveStats(t);
+            pushStats();             // 事件写入后再同步，避免设备端落后一次眨眼
+          }
         }
         S.refractoryUntil = t + refr;
         S.inBlink = false;
@@ -1280,6 +1396,11 @@
       if (t - S.calStartMs >= CFG.calibrationMs) finishCalibration();
     } else if (S.phase === 'RUN') {
       detect(t, filt);
+    } else if (S.phase === 'BLINKCAL') {
+      detect(t, filt);
+      // detect 里可能已经因为收够次数而切到 RUN 了，所以再看一眼当前阶段
+      if (S.phase === 'BLINKCAL' && S.blinkCal.startMs !== null &&
+          t - S.blinkCal.startMs >= CFG.blinkCalMaxMs) finishBlinkCal('timeout');
     }
   }
 
@@ -1320,7 +1441,7 @@
   //
   // 比较相邻帧；正常 uint32 回绕连续推进，重启则分段并保持时间单调。
   function breakSampleContinuity(reason, details = {}) {
-    if (S.session && ['CAL', 'RUN', 'PAUSE'].includes(S.phase)) {
+    if (S.session && ['CAL', 'BLINKCAL', 'RUN', 'PAUSE'].includes(S.phase)) {
       endSegment(S.lastT, sampleUtc(S.lastT, Date.now()));
       S.quality.discontinuities = (S.quality.discontinuities || 0) + 1;
       S.quality.missingSamples = (S.quality.missingSamples || 0) + (details.missing || 0);
@@ -1716,7 +1837,7 @@
 
   async function runOta() {
     if (!S.connected || !S.writeFn) throw new Error('请先连接采集设备');
-    if (['CAL', 'RUN', 'PAUSE'].includes(S.phase)) throw new Error('请先结束当前测试');
+    if (['CAL', 'BLINKCAL', 'RUN', 'PAUSE'].includes(S.phase)) throw new Error('请先结束当前测试');
     const file = ui.otaFile.files && ui.otaFile.files[0];
     if (!file) throw new Error('请先选择应用 HEX 文件');
 
@@ -1911,7 +2032,7 @@
     S.statsLastLine = ''; S.statsQueuedLine = '';
     ui.btnConn.textContent = '连接设备';
     setConnText('设备已断开');
-    if (S.phase === 'RUN' || S.phase === 'CAL' || S.phase === 'PAUSE') {
+    if (S.phase === 'RUN' || S.phase === 'CAL' || S.phase === 'BLINKCAL' || S.phase === 'PAUSE') {
       S.disconnectPending = true;
       if (!S.busy) {
         S.disconnectPending = false;
@@ -1971,7 +2092,7 @@
   }
   ui.btnStop.onclick = () => { stopSession().catch(console.error); };
   ui.btnClear.onclick = () => {
-    if (S.busy || S.phase === 'RUN' || S.phase === 'CAL' || S.phase === 'PAUSE') return;
+    if (S.busy || S.phase === 'RUN' || S.phase === 'CAL' || S.phase === 'BLINKCAL' || S.phase === 'PAUSE') return;
     setBlinkCount(0); S.events = []; S.samples = []; S.session = null; S.currentChunk = null;
     S.viewingHistory = false; S.writeError = null; S.recordingStartedAt = 0;
     S.rec = { t: [], raw: [], filt: [], ev: [] }; S.recStartMs = 0; S.recEndMs = 0; S.phase = 'IDLE';
@@ -2199,7 +2320,7 @@
 
   async function exportBundle() {
     if (!S.session || S.busy) return;
-    if (S.phase === 'RUN' || S.phase === 'CAL' || S.phase === 'PAUSE') throw new Error('请先结束测试。');
+    if (S.phase === 'RUN' || S.phase === 'CAL' || S.phase === 'BLINKCAL' || S.phase === 'PAUSE') throw new Error('请先结束测试。');
     const sessionId = S.session.id;
     S.busy = true; refreshButtons();
     try {
@@ -2214,7 +2335,7 @@
   async function exportSelectedSession() {
     const id = ui.sessionList.value;
     if (!id) { alert('请先在下拉框里选一条记录。'); return; }
-    if (S.busy || ['CAL', 'RUN', 'PAUSE'].includes(S.phase)) return;
+    if (S.busy || ['CAL', 'BLINKCAL', 'RUN', 'PAUSE'].includes(S.phase)) return;
     S.busy = true; refreshButtons();
     try {
       // 选中的可能就是正在录的那条 —— 先把在途写入落盘，再读库
@@ -2228,7 +2349,7 @@
 
   // 导出本机全部历史：一个文件里放所有会话的包。
   async function exportAllSessions() {
-    if (S.busy || ['CAL', 'RUN', 'PAUSE'].includes(S.phase)) return;
+    if (S.busy || ['CAL', 'BLINKCAL', 'RUN', 'PAUSE'].includes(S.phase)) return;
     S.busy = true; refreshButtons();
     try {
       await S.writeChain;
@@ -2288,7 +2409,7 @@
   }
 
   async function loadSelectedSession() {
-    if (S.busy || ['CAL', 'RUN', 'PAUSE'].includes(S.phase)) return;
+    if (S.busy || ['CAL', 'BLINKCAL', 'RUN', 'PAUSE'].includes(S.phase)) return;
     const id = ui.sessionList.value;
     if (!id || (S.session && id === S.session.id)) return;
     S.busy = true; refreshButtons();
@@ -2458,7 +2579,7 @@
   // 实时统计刷新：卡片显示最近 30 秒次数，设备镜像仍接收同一时间窗
   // 换算出的次/分。两者都在同一个 tick 更新，暂停不会成为刷新触发条件。
   setInterval(() => {
-    const active = S.phase === 'CAL' || S.phase === 'RUN';
+    const active = S.phase === 'CAL' || S.phase === 'BLINKCAL' || S.phase === 'RUN';
     if (active && !S.busy && !S.timeoutHandling && S.recordingStartedAt) {
       const lastActivity = S.lastSampleAt || S.recordingStartedAt;
       if (performance.now() - lastActivity > CFG.sampleTimeoutMs) {
@@ -2475,7 +2596,7 @@
         S.lastT - S.session.first_timeline_ms >= CFG.maxRecordMs) {
       stopSession('max_duration').catch(console.error);
     }
-    if (S.phase === 'CAL' || S.phase === 'RUN' || S.phase === 'PAUSE') {
+    if (S.phase === 'CAL' || S.phase === 'BLINKCAL' || S.phase === 'RUN' || S.phase === 'PAUSE') {
       updateLiveStats();
     }
     pushStats();
