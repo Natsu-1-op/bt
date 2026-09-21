@@ -1732,12 +1732,23 @@
       for (let offset = 0; offset < firmware.size; offset += OTA_PACKET_BYTES) {
         const chunk = firmware.image.slice(offset, Math.min(offset + OTA_PACKET_BYTES, firmware.size));
         const command = `OTA_DATA,${offset},${bytesToHex(chunk)},${crc16Ccitt(chunk)}`;
-        let accepted = false;
+        let accepted = false, lastErr = null;
         for (let attempt = 0; attempt < 3 && !accepted; attempt++) {
-          const ack = await sendOtaCommand(command);
-          accepted = ack[1] === 'ACK' && Number(ack[2]) === offset + chunk.length;
+          // ⚠️ 异常也要当成"一次失败"来重试。以前 await 一旦抛（丢应答超时最常见），
+          //    会直接冒泡出去把整个升级中止，3 次重试形同虚设 —— 而 BLE 丢一个应答并不罕见。
+          try {
+            const ack = await sendOtaCommand(command);
+            accepted = ack[1] === 'ACK' && Number(ack[2]) === offset + chunk.length;
+            if (!accepted) lastErr = new Error(`设备回了意外应答：${ack.join(',')}`);
+          } catch (err) {
+            lastErr = err;
+          }
+          if (!accepted) {
+            if (!S.connected || !S.writeFn) break;          // 真断链了就别白试
+            if (attempt < 2) await new Promise(r => setTimeout(r, 120));
+          }
         }
-        if (!accepted) throw new Error(`数据包 ${offset} 未获设备确认`);
+        if (!accepted) throw lastErr || new Error(`数据包 ${offset} 未获设备确认`);
         const percent = Math.round(((offset + chunk.length) / firmware.size) * 100);
         ui.otaStatus.textContent = `正在上传固件：${percent}%（${offset + chunk.length}/${firmware.size} 字节）`;
       }
