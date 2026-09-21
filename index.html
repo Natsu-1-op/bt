@@ -199,6 +199,9 @@
     maLength: 8,             // 8 点滑动平均：200Hz 下正好在 25/50/75Hz 零点，顺带压 50Hz
     calibrationMs: 3000,
     calibrationSkipMs: 300,  // 标定开头这段时间的样本不参与阈值计算（见 onSample 里的说明）
+    // 噪声估计与电极漂移监测
+    noiseDetrendWindowMs: 500,      // 算 sigma 前先减掉这么长的滑动平均（去慢漂移）
+    calibrationDriftWarnCounts: 5,  // 标定窗口内漂移超过这么多 counts 就在现场提示电极不稳
     // ---- 现场眨眼标定（方案 C）----
     // 只靠噪声推算阈值，在信号很干净时会过于保守：实测某段 σ=1.00，阈值却被定成 12（=12σ），
     // 受试者浅浅的眨眼就检不出来。这一步直接量「这个受试者此刻真实的眨眼有多深」。
@@ -483,6 +486,39 @@
     const a = Float64Array.from(arr).sort();
     const n = a.length;
     return n % 2 ? a[(n - 1) >> 1] : (a[n / 2 - 1] + a[n / 2]) / 2;
+  }
+
+  // 去漂移的噪声估计。
+  // ⚠️ 为什么必须去漂移：sigma 原本是拿 |样本 − 基线| 的中位数算的，
+  //    但慢漂移【不是噪声】，却照样被算进"偏差"里。实测一段标定窗口 3 秒内漂了 7 counts，
+  //    sigma 就从 1.93 虚涨到 3.89 —— 阈值跟着抬高，浅眨眼全被漏掉。
+  //    漂移的来源是电极整定 / 运动 / 呼吸，跟电磁干扰无关（电磁干扰主要在高频，而 50Hz 已被
+  //    8 点滑动平均在 200Hz 下的零点压掉了）。
+  // 做法：先减掉 0.5 秒滑动平均（去掉慢于约 1Hz 的成分），再对残差算 MAD。
+  // 这和判决器本身的看法是一致的：比 1Hz 更慢的东西由基线跟踪去跟，不算噪声。
+  function robustNoise(samples) {
+    if (!samples || samples.length < 8) return 1;
+    const W = Math.max(2, Math.round(CFG.sampleRateHz * CFG.noiseDetrendWindowMs / 1000));
+    const hp = new Array(samples.length);
+    for (let i = 0; i < samples.length; i++) {
+      const a = Math.max(0, i - W), b = Math.min(samples.length, i + W + 1);
+      let sum = 0;
+      for (let j = a; j < b; j++) sum += samples[j];
+      hp[i] = samples[i] - sum / (b - a);
+    }
+    return Math.max(1, 1.4826 * median(hp.map(v => Math.abs(v))));
+  }
+
+  // 标定窗口内的基线漂移量：末四分之一的中位数 − 首四分之一的中位数。
+  // 中位数而不是均值 —— 窗口里混进一次眨眼也不至于把结论带偏。
+  function calibrationDrift(samples) {
+    if (!samples || samples.length < 8) return 0;
+    const q = Math.max(1, Math.floor(samples.length / 4));
+    const measured = median(samples.slice(-q)) - median(samples.slice(0, q));
+    // ⚠️ 首/末四分位的中位数分别落在窗口的 1/8 和 7/8 处，所以量到的是【总漂移的 3/4】。
+    //    不换算回来，报告的数字会比实际小 25%，和"3 秒内漂了 N counts"的说法对不上。
+    //    线性漂移下这个换算是精确的；非线性漂移下是近似 —— 作为现场提示足够了。
+    return measured / 0.75;
   }
 
   function setConnText(t, online) {
@@ -1196,10 +1232,11 @@
       ui.help.textContent = '准备阶段信号异常或接近量程边界，本次测试已停止，请检查佩戴、传感器和连接后重新测试。';
       return;
     }
-    const dev = S.cal.map(v => Math.abs(v - base));
-    const mad = median(dev);
-    // 1.4826 * MAD 是正态分布下标准差的稳健估计
-    const sigma = Math.max(1, 1.4826 * mad);
+    // rawMad / sigmaRaw 只留档做对比；真正参与判定的是去漂移后的 sigma。
+    const mad = median(S.cal.map(v => Math.abs(v - base)));
+    const sigmaRaw = Math.max(1, 1.4826 * mad);
+    const sigma = robustNoise(S.cal);
+    const drift = calibrationDrift(S.cal);
     const drop = config.manualThresholdEnabled
       ? Math.max(config.minDropCounts, config.manualDropCounts)
       : Math.max(config.minDropCounts, sigma * config.noiseMultiplier);
@@ -1214,13 +1251,24 @@
     S.thUp = base - drop * config.releaseRatio;
     S.phase = 'RUN';
     if (S.session) {
-      S.session.detector = { baseline: base, mad, sigma, drop_counts: drop, threshold_down: S.thDown, threshold_up: S.thUp, calibrated_timeline_ms: S.lastT };
+      S.session.detector = { baseline: base, mad, sigma, sigma_raw: sigmaRaw, drift_counts: Math.round(drift), drop_counts: drop, threshold_down: S.thDown, threshold_up: S.thUp, calibrated_timeline_ms: S.lastT };
       addEvent('calibration_complete', S.lastT, sampleUtc(S.lastT, Date.now()));
       persistSession();
     }
     setState('计数中', 'good');
     ui.help.innerHTML = '测试中：黄色竖线表示已识别的眨眼。若波形明显异常，请结束本次测试后重新开始。';
     refreshButtons();
+    // 电极漂移的现场提示。比事后看数据有用得多 —— 在医院当场就能处理。
+    if (Math.abs(drift) >= CFG.calibrationDriftWarnCounts) {
+      ui.help.textContent = '⚠️ 电极似乎在漂移：标定 ' + (CFG.calibrationMs / 1000).toFixed(0) + ' 秒内基线'
+        + (drift > 0 ? '上移' : '下移') + '了 ' + Math.abs(drift).toFixed(0) + ' counts。'
+        + '这会把阈值抬高、漏掉浅眨眼。建议重新贴电极、让受试者放松不动，或稍等 1 分钟重新开始。';
+      setState('电极漂移', 'warnc');
+      if (S.session) {
+        addEvent('electrode_drift_warning', S.lastT, sampleUtc(S.lastT, Date.now()),
+                 { drift_counts: Math.round(drift), sigma, sigma_raw: sigmaRaw });
+      }
+    }
     // 方案 C：噪声法标定完，若开启了现场眨眼标定，再量一次受试者真实的眨眼深度。
     // 注意是【之后】调用 —— 上面那套噪声法结果已经落进 S.session.detector，两条路都留痕。
     if (config.blinkCalEnabled) startBlinkCalibration();
@@ -2143,10 +2191,13 @@
         const skipMs = Number(config.calibrationSkipMs) || 0;
         if (t - calStart >= skipMs) cal.push(filt);
         if (t - calStart < config.calibrationMs) return null;
-        const base = median(cal), mad = median(cal.map(v => Math.abs(v - base)));
+        const base = median(cal);
+        // ⚠️ 必须和实时判决用同一套噪声估计（去漂移）。
+        //    否则同一份数据「实时」和「回看」会算出不同的眨眼数 —— 这是数据一致性问题。
+        const sigma = robustNoise(cal);
         const drop = config.manualThresholdEnabled
           ? Math.max(config.minDropCounts, config.manualDropCounts)
-          : Math.max(config.minDropCounts, Math.max(1, 1.4826 * mad) * config.noiseMultiplier);
+          : Math.max(config.minDropCounts, sigma * config.noiseMultiplier);
         baseline = base; thDown = base - drop; thUp = base - drop * config.releaseRatio; ready = true;
         return null;
       }
