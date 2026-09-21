@@ -522,8 +522,12 @@
   // ⚠️ 必须和 onSample 里真正的取样条件一致：开头 calibrationSkipMs 不计入，
   //    所以是 (calibrationMs - calibrationSkipMs) × 采样率，不是 calibrationMs × 采样率。
   //    留 5% 余量吸收定时抖动。
-  function minCalibrationSamples() {
-    const usableMs = Math.max(0, CFG.calibrationMs - CFG.calibrationSkipMs);
+  function minCalibrationSamples(sessionConfig) {
+    const raw = sessionConfig ? Number(sessionConfig.calibrationSkipMs) : NaN;
+    // 会话里没写这个字段（旧记录，或"加了跳过但还没写进配置"那段时间录的）
+    // 就退回当前 CFG 的值 —— 偏宽松，免得把正常记录误拒。
+    const skipMs = Number.isFinite(raw) ? raw : CFG.calibrationSkipMs;
+    const usableMs = Math.max(0, CFG.calibrationMs - skipMs);
     return Math.max(1, Math.floor(CFG.sampleRateHz * usableMs / 1000 * 0.95));
   }
 
@@ -2126,25 +2130,40 @@
   // ------------------------------------------------------------------
   // 从「会话快照 + 数据库里的数据块/事件」拼出导出包。
   // 刚录完的记录和翻出来的历史记录走的是同一套校验，不会两套标准。
+  // 导出前的可导性校验。抽成纯函数有两个原因：
+  //   1) 这里出过 bug（阈值过严，导致加跳过之后录的每一条都导不出去）——
+  //      单独拎出来才能用测试盯死
+  //   2) 错误信息能带上具体数字，而不是一句笼统的"无法导出"
+  // 返回 null = 可以导出；否则返回不能导出的原因。
+  function exportRejectReason(snapshot) {
+    if (!snapshot || !snapshot.id) return '记录无效。';
+    if (snapshot.storage_error) return '这条记录保存时出过错，数据可能不完整。';
+    if (snapshot.status === 'recording') return '这条记录还在进行中，请先结束测试。';
+    const q = snapshot.quality || {};
+    if (snapshot.status === 'calibration_invalid' || q.calibration_valid === false) {
+      return '这条记录的准备阶段被判为无效。';
+    }
+    if (snapshot.schema === 'blink-collector/v1') {
+      const need = minCalibrationSamples(snapshot.config);
+      if (!Number.isFinite(q.calibration_samples)) return '这条记录没记下准备阶段的样本数。';
+      if (q.calibration_samples < need) {
+        return '准备阶段样本太少（只有 ' + q.calibration_samples + ' 个，至少要 ' + need + ' 个）。';
+      }
+    }
+    return null;
+  }
+
   async function buildBundle(sessionSnapshot) {
     const sessionId = sessionSnapshot.id;
-    if (sessionSnapshot.storage_error || sessionSnapshot.status === 'recording') {
-      throw new Error('这条记录未正常结束或保存不完整，无法导出。');
-    }
+    const reason = exportRejectReason(sessionSnapshot);
+    if (reason) throw new Error(reason);
     const q = sessionSnapshot.quality || {};
-    // ⚠️ 这里的下限必须用 minCalibrationSamples()，不能按满 3000ms 算 ——
-    //    标定开头有 calibrationSkipMs 不取样，按满算会把正常记录误判成"准备阶段无效"而拒绝导出。
-    if (sessionSnapshot.status === 'calibration_invalid' || q.calibration_valid === false ||
-        (sessionSnapshot.schema === 'blink-collector/v1' &&
-         (!Number.isFinite(q.calibration_samples) || q.calibration_samples < minCalibrationSamples()))) {
-      throw new Error('这条记录没有完成有效准备阶段，无法导出。');
-    }
     const sampleChunks = [];
     await visitChunks(sessionId, chunk => sampleChunks.push(chunk));
     const storedCount = sampleChunks.reduce((n, c) => n + c.rows.length, 0);
     const expectedCount = q.received;
     if (Number.isFinite(expectedCount) && storedCount !== expectedCount) {
-      throw new Error('保存的样本数量不完整，无法导出。');
+      throw new Error('保存的样本数不完整（库里 ' + storedCount + ' 个，记录里 ' + expectedCount + ' 个）。');
     }
     const exportedUtcMs = Date.now();
     return {
@@ -2184,9 +2203,11 @@
   async function exportSelectedSession() {
     const id = ui.sessionList.value;
     if (!id) { alert('请先在下拉框里选一条记录。'); return; }
-    if (S.busy) return;
+    if (S.busy || ['CAL', 'RUN', 'PAUSE'].includes(S.phase)) return;
     S.busy = true; refreshButtons();
     try {
+      // 选中的可能就是正在录的那条 —— 先把在途写入落盘，再读库
+      await S.writeChain;
       const rec = await readSessionRecord(id);
       if (!rec) throw new Error('本机找不到这条记录。');
       const bundle = await buildBundle(rec);
@@ -2196,34 +2217,43 @@
 
   // 导出本机全部历史：一个文件里放所有会话的包。
   async function exportAllSessions() {
-    if (S.busy) return;
+    if (S.busy || ['CAL', 'RUN', 'PAUSE'].includes(S.phase)) return;
     S.busy = true; refreshButtons();
     try {
+      await S.writeChain;
       const db = await openDb();
       const all = await new Promise((resolve, reject) => {
         const r = db.transaction('sessions', 'readonly').objectStore('sessions').getAll();
         r.onsuccess = () => resolve(r.result || []); r.onerror = () => reject(r.error);
       });
       if (!all.length) { alert('本机还没有保存任何测试。'); return; }
-      if (!confirm(`导出全部 ${all.length} 条本机测试？\n\n导出的文件可能比较大（每条几 MB），生成时需要一点时间。`)) return;
-      const bundles = [], skipped = [];
-      for (const rec of all.sort((a, b) => a.created_utc_ms - b.created_utc_ms)) {
-        try { bundles.push(await buildBundle(JSON.parse(JSON.stringify(rec)))); }
-        catch (err) { skipped.push({ id: rec.id, reason: err.message || String(err) }); }
+      // 先按记录里的样本数估个体量，让用户心里有数（全是内存里拼，太大会卡）
+      const totalSamples = all.reduce((n, r) => n + ((r.quality && Number(r.quality.received)) || 0), 0);
+      const estMB = (totalSamples * 60 / 1048576).toFixed(0);
+      if (!confirm(`导出全部 ${all.length} 条本机测试？\n\n共约 ${totalSamples.toLocaleString()} 个采样点，文件大约 ${estMB} MB。\n生成和下载都需要一点时间，请不要中途离开页面。`)) return;
+
+      const skipped = [];
+      const exportedUtcMs = Date.now();
+      const stamp = iso(exportedUtcMs).replace(/[:.]/g, '-');
+      // 按块写进 Blob 的 parts，不要先拼成一个巨大的字符串 ——
+      // 全部记录可能有几百 MB，拼字符串会多占一整份内存。
+      const parts = ['{"schema":"blink-export-all/v1","exported_utc_ms":' + exportedUtcMs +
+                     ',"exported_utc_iso":' + JSON.stringify(iso(exportedUtcMs)) + ',"sessions":['];
+      let count = 0;
+      for (const rec of all.slice().sort((a, b) => a.created_utc_ms - b.created_utc_ms)) {
+        try {
+          const bundle = await buildBundle(JSON.parse(JSON.stringify(rec)));
+          parts.push(count ? ',' : '', JSON.stringify(bundle));   // 顺带把分隔符拼上
+          count++;
+        } catch (err) {
+          skipped.push({ id: rec.id, participant_id: rec.participant_id || '', reason: err.message || String(err) });
+        }
       }
-      if (!bundles.length) throw new Error('没有一条能导出。' + (skipped[0] ? ' 例如：' + skipped[0].reason : ''));
-      const stamp = iso(Date.now()).replace(/[:.]/g, '-');
-      const payload = {
-        schema: 'blink-export-all/v1',
-        exported_utc_ms: Date.now(),
-        exported_utc_iso: iso(Date.now()),
-        session_count: bundles.length,
-        skipped,
-        sessions: bundles
-      };
-      saveBlob(`blink-all-${stamp}.json`, 'application/json;charset=utf-8', [JSON.stringify(payload)]);
+      if (!count) throw new Error('没有一条能导出。' + (skipped[0] ? ' 例如：' + skipped[0].reason : ''));
+      parts.push('],"session_count":' + count + ',"skipped":' + JSON.stringify(skipped) + '}');
+      saveBlob(`blink-all-${stamp}.json`, 'application/json;charset=utf-8', parts);
       if (skipped.length) {
-        alert(`已导出 ${bundles.length} 条；有 ${skipped.length} 条跳过（未正常结束或缺数据），清单记在文件的 skipped 字段里。`);
+        alert(`已导出 ${count} 条；有 ${skipped.length} 条跳过，原因记在文件的 skipped 字段里。\n\n第一条：${skipped[0].reason}`);
       }
     } finally { S.busy = false; refreshButtons(); }
   }
