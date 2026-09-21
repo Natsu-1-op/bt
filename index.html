@@ -155,6 +155,8 @@
       <div class="field"><label>每隔几秒统计一次</label><input id="fStep" type="number" value="5" min="1" step="1"></div>
       <div class="field"><label>本机保存的测试</label><select id="sessionList"><option value="">当前测试</option></select>
         <button id="btnDeleteSession" class="danger" type="button" style="width:100%;padding:6px;margin-top:6px;font-size:12px" disabled>删除这条</button>
+        <button id="btnExportOne" class="ghost" type="button" style="width:100%;padding:6px;margin-top:6px;font-size:12px" disabled>导出这条</button>
+        <button id="btnExportAll" class="ghost" type="button" style="width:100%;padding:6px;margin-top:6px;font-size:12px">导出全部</button>
       </div>
       <div class="field"><label>查看历史测试</label><button id="btnLoad" class="ghost" style="width:100%;padding:6px">打开所选测试</button></div>
     </div>
@@ -279,6 +281,7 @@
     manualThresholdEnabled: $('manualThresholdEnabled'), manualDrop: $('manualDrop'), debugReadout: $('debugReadout'),
     autoRange: $('autoRange'),
     sessionList: $('sessionList'), btnDeleteSession: $('btnDeleteSession'),
+    btnExportOne: $('btnExportOne'), btnExportAll: $('btnExportAll'),
     cloudGate: $('cloudGate'), cloudSpin: $('cloudSpin'), cloudTitle: $('cloudTitle'),
     cloudMsg: $('cloudMsg'), cloudActions: $('cloudActions'), cloudStart: $('cloudStart'), cloudCancel: $('cloudCancel'),
     sAvg: $('sAvg'), sCount: $('sCount'), sDur: $('sDur'), sWin: $('sWin')
@@ -492,6 +495,8 @@
     ui.btnFull.disabled = !hasSession;
     ui.btnLoad.disabled = running || paused || cal || S.busy;
     ui.btnDeleteSession.disabled = !ui.sessionList.value || running || paused || cal || S.busy;
+    ui.btnExportOne.disabled = !ui.sessionList.value || running || paused || cal || S.busy;
+    ui.btnExportAll.disabled = running || paused || cal || S.busy;
     ui.btnOledSend.disabled = !S.connected || !S.writeFn || S.busy;
     ui.btnOledImageSend.disabled = !S.connected || !S.writeFn || S.busy || !S.oledImageBitmap;
     ui.btnOledImageClear.disabled = !S.oledImageBitmap;
@@ -513,10 +518,20 @@
 
   function resetFilter() { S.ma = []; S.maSum = 0; }
 
+  // 标定阶段至少应该收到多少个样本。
+  // ⚠️ 必须和 onSample 里真正的取样条件一致：开头 calibrationSkipMs 不计入，
+  //    所以是 (calibrationMs - calibrationSkipMs) × 采样率，不是 calibrationMs × 采样率。
+  //    留 5% 余量吸收定时抖动。
+  function minCalibrationSamples() {
+    const usableMs = Math.max(0, CFG.calibrationMs - CFG.calibrationSkipMs);
+    return Math.max(1, Math.floor(CFG.sampleRateHz * usableMs / 1000 * 0.95));
+  }
+
   function currentConfig() {
     return {
       adcMax: CFG.adcMax, sampleRateHz: CFG.sampleRateHz, maLength: CFG.maLength,
-      calibrationMs: CFG.calibrationMs, noiseMultiplier: S.consoleConfig.noiseMultiplier,
+      calibrationMs: CFG.calibrationMs, calibrationSkipMs: CFG.calibrationSkipMs,
+      noiseMultiplier: S.consoleConfig.noiseMultiplier,
       minDropCounts: S.consoleConfig.minDropCounts, releaseRatio: CFG.releaseRatio,
       minWidthMs: CFG.minWidthMs, maxWidthMs: CFG.maxWidthMs,
       refractoryMs: S.consoleConfig.refractoryMs, baselineAlpha: CFG.baselineAlpha,
@@ -1986,7 +2001,11 @@
       const filt = push(raw);
       if (calStart === null) calStart = t;
       if (!ready) {
-        cal.push(filt);
+        // 必须和实时判决用同一个标定窗口：开头 calibrationSkipMs 的样本同样不进标定。
+        // 否则同一份数据「实时」和「回看」会算出不同的眨眼数 —— 这是数据一致性问题。
+        // 旧记录里没有这个字段，取 0，它们的行为和以前完全一样。
+        const skipMs = Number(config.calibrationSkipMs) || 0;
+        if (t - calStart >= skipMs) cal.push(filt);
         if (t - calStart < config.calibrationMs) return null;
         const base = median(cal), mad = median(cal.map(v => Math.abs(v - base)));
         const drop = config.manualThresholdEnabled
@@ -2105,30 +2124,30 @@
   // ------------------------------------------------------------------
   // 导出与本机历史记录
   // ------------------------------------------------------------------
-  async function exportBundle() {
-    if (!S.session || S.busy) return;
-    if (S.phase === 'RUN' || S.phase === 'CAL' || S.phase === 'PAUSE') throw new Error('请先结束测试。');
-    const sessionId = S.session.id;
-    S.busy = true; refreshButtons();
-    try {
-      await waitForWrites();
-      if (!S.session || S.session.id !== sessionId) throw new Error('记录已切换，已取消导出。');
-      const sessionSnapshot = JSON.parse(JSON.stringify(S.session));
-      if (sessionSnapshot.storage_error || sessionSnapshot.status === 'recording') throw new Error('这条记录未正常结束或保存不完整，请重新测试。');
-      const sessionQuality = sessionSnapshot.quality || {};
-      if (sessionSnapshot.status === 'calibration_invalid' || sessionQuality.calibration_valid === false ||
-          (sessionSnapshot.schema === 'blink-collector/v1' &&
-           (!Number.isFinite(sessionQuality.calibration_samples) ||
-            sessionQuality.calibration_samples < Math.ceil(CFG.sampleRateHz * CFG.calibrationMs / 1000)))) {
-        throw new Error('这条记录没有完成有效准备阶段，请重新测试。');
-      }
-      const sampleChunks = [];
-      await visitChunks(sessionId, chunk => sampleChunks.push(chunk));
-      const storedCount = sampleChunks.reduce((n, c) => n + c.rows.length, 0);
-      const expectedCount = sessionSnapshot.quality && sessionSnapshot.quality.received;
-      if (Number.isFinite(expectedCount) && storedCount !== expectedCount) throw new Error('保存的样本数量不完整，请重新测试。');
-      const exportedUtcMs = Date.now();
-      const bundle = {
+  // 从「会话快照 + 数据库里的数据块/事件」拼出导出包。
+  // 刚录完的记录和翻出来的历史记录走的是同一套校验，不会两套标准。
+  async function buildBundle(sessionSnapshot) {
+    const sessionId = sessionSnapshot.id;
+    if (sessionSnapshot.storage_error || sessionSnapshot.status === 'recording') {
+      throw new Error('这条记录未正常结束或保存不完整，无法导出。');
+    }
+    const q = sessionSnapshot.quality || {};
+    // ⚠️ 这里的下限必须用 minCalibrationSamples()，不能按满 3000ms 算 ——
+    //    标定开头有 calibrationSkipMs 不取样，按满算会把正常记录误判成"准备阶段无效"而拒绝导出。
+    if (sessionSnapshot.status === 'calibration_invalid' || q.calibration_valid === false ||
+        (sessionSnapshot.schema === 'blink-collector/v1' &&
+         (!Number.isFinite(q.calibration_samples) || q.calibration_samples < minCalibrationSamples()))) {
+      throw new Error('这条记录没有完成有效准备阶段，无法导出。');
+    }
+    const sampleChunks = [];
+    await visitChunks(sessionId, chunk => sampleChunks.push(chunk));
+    const storedCount = sampleChunks.reduce((n, c) => n + c.rows.length, 0);
+    const expectedCount = q.received;
+    if (Number.isFinite(expectedCount) && storedCount !== expectedCount) {
+      throw new Error('保存的样本数量不完整，无法导出。');
+    }
+    const exportedUtcMs = Date.now();
+    return {
       schema: 'blink-export/v1',
       exported_utc_ms: exportedUtcMs,
       exported_utc_iso: iso(exportedUtcMs),
@@ -2137,8 +2156,75 @@
       events: (await readEvents(sessionId)).sort((a, b) => a.id - b.id),
       sample_columns: ['phone_timeline_ms', 'sample_utc_ms', 'phone_received_utc_ms', 'adc_raw', 'adc_filtered', 'segment_id', 'flags'],
       sample_chunks: sampleChunks
-      };
+    };
+  }
+
+  async function readSessionRecord(id) {
+    const db = await openDb();
+    return new Promise((resolve, reject) => {
+      const r = db.transaction('sessions', 'readonly').objectStore('sessions').get(id);
+      r.onsuccess = () => resolve(r.result); r.onerror = () => reject(r.error);
+    });
+  }
+
+  async function exportBundle() {
+    if (!S.session || S.busy) return;
+    if (S.phase === 'RUN' || S.phase === 'CAL' || S.phase === 'PAUSE') throw new Error('请先结束测试。');
+    const sessionId = S.session.id;
+    S.busy = true; refreshButtons();
+    try {
+      await waitForWrites();
+      if (!S.session || S.session.id !== sessionId) throw new Error('记录已切换，已取消导出。');
+      const bundle = await buildBundle(JSON.parse(JSON.stringify(S.session)));
       saveBlob(`blink-${sessionId}.json`, 'application/json;charset=utf-8', [JSON.stringify(bundle)]);
+    } finally { S.busy = false; refreshButtons(); }
+  }
+
+  // 直接把「本机保存的测试」里选中的那条导出，不用先打开它。
+  async function exportSelectedSession() {
+    const id = ui.sessionList.value;
+    if (!id) { alert('请先在下拉框里选一条记录。'); return; }
+    if (S.busy) return;
+    S.busy = true; refreshButtons();
+    try {
+      const rec = await readSessionRecord(id);
+      if (!rec) throw new Error('本机找不到这条记录。');
+      const bundle = await buildBundle(rec);
+      saveBlob(`blink-${id}.json`, 'application/json;charset=utf-8', [JSON.stringify(bundle)]);
+    } finally { S.busy = false; refreshButtons(); }
+  }
+
+  // 导出本机全部历史：一个文件里放所有会话的包。
+  async function exportAllSessions() {
+    if (S.busy) return;
+    S.busy = true; refreshButtons();
+    try {
+      const db = await openDb();
+      const all = await new Promise((resolve, reject) => {
+        const r = db.transaction('sessions', 'readonly').objectStore('sessions').getAll();
+        r.onsuccess = () => resolve(r.result || []); r.onerror = () => reject(r.error);
+      });
+      if (!all.length) { alert('本机还没有保存任何测试。'); return; }
+      if (!confirm(`导出全部 ${all.length} 条本机测试？\n\n导出的文件可能比较大（每条几 MB），生成时需要一点时间。`)) return;
+      const bundles = [], skipped = [];
+      for (const rec of all.sort((a, b) => a.created_utc_ms - b.created_utc_ms)) {
+        try { bundles.push(await buildBundle(JSON.parse(JSON.stringify(rec)))); }
+        catch (err) { skipped.push({ id: rec.id, reason: err.message || String(err) }); }
+      }
+      if (!bundles.length) throw new Error('没有一条能导出。' + (skipped[0] ? ' 例如：' + skipped[0].reason : ''));
+      const stamp = iso(Date.now()).replace(/[:.]/g, '-');
+      const payload = {
+        schema: 'blink-export-all/v1',
+        exported_utc_ms: Date.now(),
+        exported_utc_iso: iso(Date.now()),
+        session_count: bundles.length,
+        skipped,
+        sessions: bundles
+      };
+      saveBlob(`blink-all-${stamp}.json`, 'application/json;charset=utf-8', [JSON.stringify(payload)]);
+      if (skipped.length) {
+        alert(`已导出 ${bundles.length} 条；有 ${skipped.length} 条跳过（未正常结束或缺数据），清单记在文件的 skipped 字段里。`);
+      }
     } finally { S.busy = false; refreshButtons(); }
   }
 
@@ -2203,6 +2289,8 @@
 
   // 下拉框本身没有别的事件，选中项一变就刷新按钮可用状态
   ui.sessionList.onchange = () => refreshButtons();
+  ui.btnExportOne.onclick = () => { exportSelectedSession().catch(err => { console.error(err); alert('导出失败：' + (err.message || err)); }); };
+  ui.btnExportAll.onclick = () => { exportAllSessions().catch(err => { console.error(err); alert('导出失败：' + (err.message || err)); }); };
 
   ui.btnDeleteSession.onclick = async () => {
     const id = ui.sessionList.value;
