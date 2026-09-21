@@ -1122,7 +1122,9 @@
       console.error(err); alert(`无法开始测试：${err.message || err}`);
     } finally {
       S.busy = false; refreshButtons();
-      if (S.disconnectPending && S.session && (S.phase === 'CAL' || S.phase === 'RUN' || S.phase === 'PAUSE')) {
+      // BLINKCAL 也要算进来：beginFormalSession 里有 await，这期间样本照常到达，
+      // finishCalibration 可能已经把阶段推到 BLINKCAL 了。漏掉它就漏掉断连处理。
+      if (S.disconnectPending && S.session && (S.phase === 'CAL' || S.phase === 'BLINKCAL' || S.phase === 'RUN' || S.phase === 'PAUSE')) {
         S.disconnectPending = false;
         stopSession('bluetooth_disconnected').catch(console.error);
       }
@@ -2171,7 +2173,10 @@
   ui.btnFull.onclick = () => { if (!S.busy) { fillRangeInputs(); analyze().catch(console.error); } };
   ui.btnAnalyze.onclick = () => { if (!S.busy) analyze().catch(console.error); };
 
-  function makeOfflineDetector(config) {
+  // fixedDrop：这次会话实时判决时真正用过的阈值。传了就【直接用它】，不再自己重算 ——
+  // 方案 C（现场眨眼标定）定出来的阈值是量出来的，离线这条路上没有眨眼标定那一段数据，
+  // 重算必然对不上，同一份记录「实时」和「回看」就会给出不同的眨眼数。
+  function makeOfflineDetector(config, fixedDrop) {
     let ma = [], maSum = 0, cal = [], calStart = null, baseline = 0, thDown = 0, thUp = 0;
     let ready = false, inBlink = false, falling = 0, fallingUtc = 0, minimum = 0, refractoryUntil = 0, previousSegment = null;
     const push = v => { ma.push(v); maSum += v; if (ma.length > config.maLength) maSum -= ma.shift(); return maSum / ma.length; };
@@ -2192,12 +2197,15 @@
         if (t - calStart >= skipMs) cal.push(filt);
         if (t - calStart < config.calibrationMs) return null;
         const base = median(cal);
-        // ⚠️ 必须和实时判决用同一套噪声估计（去漂移）。
-        //    否则同一份数据「实时」和「回看」会算出不同的眨眼数 —— 这是数据一致性问题。
+        // 阈值优先用「实时当时真正用过的那个」（现场眨眼标定 / 手动 / 噪声法都算）。
+        // 只有拿不到时才退回自己重算 —— 而且重算也必须用和实时同一套噪声估计（去漂移），
+        // 否则同一份数据「实时」和「回看」会算出不同的眨眼数。
         const sigma = robustNoise(cal);
-        const drop = config.manualThresholdEnabled
-          ? Math.max(config.minDropCounts, config.manualDropCounts)
-          : Math.max(config.minDropCounts, sigma * config.noiseMultiplier);
+        const drop = Number.isFinite(fixedDrop)
+          ? fixedDrop
+          : (config.manualThresholdEnabled
+              ? Math.max(config.minDropCounts, config.manualDropCounts)
+              : Math.max(config.minDropCounts, sigma * config.noiseMultiplier));
         baseline = base; thDown = base - drop; thUp = base - drop * config.releaseRatio; ready = true;
         return null;
       }
@@ -2243,7 +2251,12 @@
     const winMs = clamp((Number(ui.fWin.value) || 30) * 1000, 5000, 600000);
     const stepMs = clamp((Number(ui.fStep.value) || 5) * 1000, 1000, 600000);
 
-    const detector = makeOfflineDetector(S.session.config);
+    // 把这次会话实时判决时真正用过的阈值取出来传下去。
+    // blink_calibration.threshold 在"深度法"和"退回噪声法"两条分支里都会写，
+    // 所以它总是等于实时实际用的那个值。
+    const liveDrop = S.session.blink_calibration && Number.isFinite(S.session.blink_calibration.threshold)
+      ? S.session.blink_calibration.threshold : null;
+    const detector = makeOfflineDetector(S.session.config, liveDrop);
     const allEvents = [];
     await visitChunks(S.session.id, chunk => {
       for (const row of chunk.rows) { const event = detector(row); if (event) allEvents.push(event); }
