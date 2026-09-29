@@ -1,3 +1,4 @@
+const { readPageSource, extractFunction } = require('./helpers/source');
 // 调试台配置回填的一致性测试。
 //
 // 背景（2026-09-23 实测事故）：
@@ -20,15 +21,11 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 
 const PAGE_DIR = process.env.BLINK_PAGE_DIR || path.join(__dirname, '..');
-const read = f => fs.readFileSync(path.join(PAGE_DIR, f), 'utf8');
+const read = f => readPageSource(path.join(PAGE_DIR, f));
 const testSrc = read('test.html');
 const idxSrc = read('index.html');
 
-function extract(src, name) {
-  const m = src.match(new RegExp(`(?:async )?function ${name}\\([^]*?\\n  \\}`));
-  assert(m, `抽不到 ${name}() —— 正则和源码不同步了（06-踩过的坑 坑 5）`);
-  return m[0];
-}
+function extract(src, name) { return extractFunction(src, name); }
 
 // ---------------------------------------------------------------- 静态：字段集合
 // consolePayload() 里写成 `<key>: c.<something>` 的，就是要存进云端的配置字段
@@ -60,8 +57,11 @@ const CLOUD = { noiseMultiplier: 3, refractoryMs: 250, manualThresholdEnabled: f
   manualDropCounts: 45, minDropCounts: 8, blinkCalEnabled: true, blinkCalRatio: 0.7 };
 
 const ui = makeUI();
-const applyConsoleConfig = new Function('ui', 'CFG', 'updateDebugControls',
-  extract(testSrc, 'applyConsoleConfig') + '; return applyConsoleConfig;')(ui, CFG, () => {});
+// applyConsoleConfig() 会顺带清掉「保存期间参数又改了」的标记（S.consoleConfigDirty），
+// 所以沙箱里必须给一个 S —— 少了它整个测试会以 ReferenceError 挂掉（c12de7a 就是这样变红的）。
+const S = { consoleConfigDirty: true };
+const applyConsoleConfig = new Function('ui', 'CFG', 'updateDebugControls', 'S', 'isValidDisplayHex', 'cacheDisplay',
+  extract(testSrc, 'applyConsoleConfig') + '; return applyConsoleConfig;')(ui, CFG, () => {}, S, () => false, () => {});
 applyConsoleConfig(CLOUD);
 
 // ---------------------------------------------------------------- 锁定名单
@@ -92,17 +92,19 @@ chk(ui.manualDrop.value === '45', `手动阈值 = 45（实际 ${ui.manualDrop.va
 chk(ui.fMinDrop.value === '8', `下限 minDropCounts = 8（实际 ${ui.fMinDrop.value}）← 本次事故字段`);
 chk(ui.fBlinkCal.checked === true, `方案 C = 开（实际 ${ui.fBlinkCal.checked}）← 本次事故字段`);
 chk(ui.fBlinkCalRatio.value === '0.7', `方案 C 比例 = 0.7（实际 ${ui.fBlinkCalRatio.value}）← 本次事故字段`);
+chk(S.consoleConfigDirty === false, '回填后清掉了「保存期间参数又改了」标记');
 
 console.log('\n四、越界值必须被夹住（不能让阈值变成 NaN 或负数）');
 const ui2 = makeUI();
-const apply2 = new Function('ui', 'CFG', 'updateDebugControls',
-  extract(testSrc, 'applyConsoleConfig') + '; return applyConsoleConfig;')(ui2, CFG, () => {});
+const S2 = { consoleConfigDirty: true };
+const apply2 = new Function('ui', 'CFG', 'updateDebugControls', 'S', 'isValidDisplayHex', 'cacheDisplay',
+  extract(testSrc, 'applyConsoleConfig') + '; return applyConsoleConfig;')(ui2, CFG, () => {}, S2, () => false, () => {});
 apply2({ noiseMultiplier: 99, refractoryMs: -5, manualDropCounts: 999999,
   minDropCounts: -3, blinkCalRatio: 5 });
 chk(ui2.fMult.value === '12', `等级 99 → 12（实际 ${ui2.fMult.value}）`);
 chk(ui2.fRefr.value === '0', `不应期 -5 → 0（实际 ${ui2.fRefr.value}）`);
 chk(ui2.manualDrop.value === '2000', `手动阈值 999999 → 2000（实际 ${ui2.manualDrop.value}）`);
-chk(ui2.fMinDrop.value === '5', `下限 -3 → 5（实际 ${ui2.fMinDrop.value}）`);
+chk(ui2.fMinDrop.value === '0', `下限 -3 → 0（实际 ${ui2.fMinDrop.value}）`);
 chk(ui2.fBlinkCalRatio.value === '1', `方案C 比例 5 → 1（实际 ${ui2.fBlinkCalRatio.value}）`);
 
 console.log('\n五、会话期间必须锁住阈值类输入（配置在开始时快照，改了也不会生效）');
@@ -115,9 +117,13 @@ const ui3 = makeUI();
 ui3.manualThresholdEnabled.checked = true;   // 手动模式
 ui3.manualDrop.value = '12';
 ui3.fMinDrop.value = '8';                    // 用户输入 8
+// thresholdDeciderText() 依赖 boundedInputNumber()，而它又依赖 clamp()。
+// 抽取式沙箱必须把这两个也带上，否则会以 ReferenceError 挂掉而不是给出判定。
+const clampFn = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 let readout = '';
-const update = new Function('ui', 'CFG', 'Math',
-  extract(testSrc, 'thresholdDeciderText') + '; return thresholdDeciderText;')(ui3, CFG, Math);
+const update = new Function('ui', 'CFG', 'clamp', 'S', 'currentConfig',
+  extract(testSrc, 'boundedInputNumber') + ';\n'
+  + extract(testSrc, 'thresholdDeciderText') + ';\nreturn thresholdDeciderText;')(ui3, CFG, clampFn, {phase:'IDLE'}, () => ({blinkCalEnabled:false}));
 readout = update();
 console.log(`  readout = ${readout}`);
 chk(/12/.test(readout), '面板说出了当前生效的阈值（max(8,12)=12）');

@@ -1,0 +1,30 @@
+.DS_Store
+node_modules/
+_backup/
+uploads/
+variants/
+*.zip
+blink-*/
+stm32/
+stm32-2khz/
+firmware/
+win-report.txt
+*.log
+security/live-rules*.json
+security/merged-rules*.json
+security/*-private.json
+# ⚠️ 这个仓库是公开的（Natsu-1-op/bt, public）。
+# 下面两项**绝对不能提交**，否则会把别人的东西公开发出去：
+#   database.rules.json —— 里面混着另一个应用（考试/名额预约）的整套 Firebase 安全规则
+#   AI-SYNC/            —— 多 AI 协作目录，按它自己的 README 约定「不进 git」，而且含截图（数 MB）
+database.rules.json
+AI-SYNC/
+
+# Legacy delivery files are local references, not website source.
+Project-*.hex
+lan-share.js
+FIXES-*.md
+OTA*.md
+HANDOFF.md
+PACKAGE_README.md
+PROMPT.md
