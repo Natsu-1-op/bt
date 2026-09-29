@@ -10,8 +10,11 @@ const hash=p=>crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex
 function firmwareFiles(dir){return fs.readdirSync(dir,{withFileTypes:true}).flatMap(e=>{const p=path.join(dir,e.name);return e.isDirectory()?firmwareFiles(p):/\.(hex|bin|c|h|s|uvprojx|uvoptx)$/i.test(p)?[p]:[];});}
 const before=new Map(firmwareFiles(dest).map(p=>[p,hash(p)]));
 const files=['index.html','test.html','blink-app.js','package.json','package-lock.json'];
-function copy(rel){fs.cpSync(path.join(root,rel),path.join(dest,rel),{recursive:true});}
-for(const rel of [...files,'tests','AI-SYNC'])copy(rel);
+function copy(rel,filter){fs.cpSync(path.join(root,rel),path.join(dest,rel),{recursive:true,...(filter?{filter}:{})});}
+// AI-SYNC 里的 evidence-* 是屏幕截图（数 MB，含桌面内容），不该随交付包外发。
+const skipEvidence=src=>!/^evidence-/.test(path.basename(src));
+for(const rel of [...files,'tests'])copy(rel);
+copy('AI-SYNC',skipEvidence);
 for(const rel of ['tools/run-page.js','tools/test-all.js','tools/package-release.js'])copy(rel);
 for(const [p,digest]of before)if(hash(p)!==digest)throw new Error('Firmware unexpectedly changed: '+p);
 const zip=path.join(root,name+'.zip');
@@ -20,7 +23,7 @@ fs.mkdirSync(backup,{recursive:true});
 if(fs.existsSync(zip)&&!fs.existsSync(path.join(backup,name+'.zip')))fs.copyFileSync(zip,path.join(backup,name+'.zip'));
 const temp=fs.mkdtempSync(path.join(root,'_backup','package-'));
 const output=path.join(temp,name+'.zip');
-execFileSync('zip',['-qr',output,name,'-x','*/node_modules/*','*/.DS_Store'],{cwd:root});
+execFileSync('zip',['-qr',output,name,'-x','*/node_modules/*','*/.DS_Store','*/AI-SYNC/evidence-*/*'],{cwd:root});
 execFileSync('unzip',['-tq',output]);
 for(const rel of files){
  const bytes=execFileSync('unzip',['-p',output,name+'/'+rel],{maxBuffer:16*1024*1024});
