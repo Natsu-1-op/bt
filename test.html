@@ -149,7 +149,7 @@
   <section id="debugPanel" class="card hidden">
     <h2>调试台</h2>
     <div class="fields">
-      <div class="field"><label>最小判定阈值（ADC 计数）</label><input id="fMinDrop" type="number" value="12" min="5" max="200" step="1"><span class="tiny">信号干净时才降得下来；低于自动阈值时不起作用</span></div>
+      <div class="field"><label>阈值下限（ADC 计数）</label><input id="fMinDrop" type="number" value="12" min="5" max="200" step="1"><span class="tiny">实际阈值不会低于此值；手动模式下还会与手动阈值取较大值。测试中参数固定，修改后下次测试生效。</span></div>
       <div class="field"><label><input id="fBlinkCal" type="checkbox">开启现场眨眼标定</label><span class="tiny">每次开始测试先请受试者眨 5 次，用真实眨眼深度定阈值。需要培训操作者，默认关闭。</span></div>
       <div class="field"><label>标定深度比例</label><input id="fBlinkCalRatio" type="number" value="0.6" min="0.2" max="1" step="0.05"><span class="tiny">阈值 = 标定到的最小眨眼深度 × 这个比例。越大越保守。</span></div>
       <div class="field"><label>自动抗干扰等级</label><input id="fMult" type="number" value="4" min="1" max="12" step="0.5"></div>
@@ -157,8 +157,8 @@
     </div>
     <div class="fields">
       <div class="field"><label><input id="manualThresholdEnabled" type="checkbox">使用手动抗纹波阈值</label></div>
-      <div class="field"><label>手动阈值（ADC 计数）</label><input id="manualDrop" type="number" value="60" min="12" max="2000" step="1" disabled></div>
-      <div class="field"><label>说明</label><span class="tiny">数值越大越不容易把纹波当作眨眼。</span></div>
+      <div class="field"><label>手动阈值（ADC 计数）</label><input id="manualDrop" type="number" value="60" min="5" max="2000" step="1" disabled></div>
+      <div class="field"><label>说明</label><span class="tiny">手动模式实际阈值 = max（阈值下限，手动阈值）。例如要用 8，两项都需设为 8；数值越大越不容易把纹波当作眨眼。</span></div>
     </div>
     <div class="fields">
       <div class="field"><label>设备屏幕下两行文字</label><textarea id="oledText" rows="2" maxlength="16">眨眼采集</textarea></div>
@@ -349,7 +349,8 @@
     oledImageOffsetX: 0, oledImageOffsetY: 0, oledImageGeometry: null, oledImageDrag: null,
     ota: { running: false, waiter: null },
     debugAuthorized: false, debugWaiter: null, debugPollTimer: null, debugPollBusy: false,
-    debugPollFails: 0
+    debugPollFails: 0,
+    consoleConfigDirty: false
   };
 
   // ------------------------------------------------------------------
@@ -530,30 +531,73 @@
 
   function resetFilter() { S.ma = []; S.maSum = 0; }
 
+  function boundedInputNumber(input, fallback, min, max) {
+    if (!input || input.value == null || String(input.value).trim() === '') return fallback;
+    const n = Number(input.value);
+    return Number.isFinite(n) ? clamp(n, min, max) : fallback;
+  }
+
   function currentConfig() {
     return {
       adcMax: CFG.adcMax, sampleRateHz: CFG.sampleRateHz, maLength: CFG.maLength,
-      calibrationMs: CFG.calibrationMs, noiseMultiplier: Number(ui.fMult.value) || CFG.noiseMultiplier,
-      minDropCounts: Number(ui.fMinDrop.value) || CFG.minDropCounts, releaseRatio: CFG.releaseRatio,
-      blinkCalEnabled: !!ui.fBlinkCal.checked, blinkCalRatio: Number(ui.fBlinkCalRatio.value) || CFG.blinkCalRatio,
+      calibrationMs: CFG.calibrationMs, noiseMultiplier: boundedInputNumber(ui.fMult, CFG.noiseMultiplier, 1, 12),
+      minDropCounts: boundedInputNumber(ui.fMinDrop, CFG.minDropCounts, 5, 200), releaseRatio: CFG.releaseRatio,
+      blinkCalEnabled: !!ui.fBlinkCal.checked, blinkCalRatio: boundedInputNumber(ui.fBlinkCalRatio, CFG.blinkCalRatio, 0.2, 1),
       minWidthMs: CFG.minWidthMs, maxWidthMs: CFG.maxWidthMs,
-      refractoryMs: Number(ui.fRefr.value) || CFG.refractoryMs, baselineAlpha: CFG.baselineAlpha,
+      refractoryMs: boundedInputNumber(ui.fRefr, CFG.refractoryMs, 0, 2000), baselineAlpha: CFG.baselineAlpha,
       manualThresholdEnabled: ui.manualThresholdEnabled.checked,
-      manualDropCounts: Math.max(CFG.minDropCounts, Number(ui.manualDrop.value) || 60)
+      manualDropCounts: boundedInputNumber(ui.manualDrop, 60, 5, 2000)
     };
   }
 
+  function detectorConfigFingerprint(config) {
+    return JSON.stringify([
+      config.noiseMultiplier, config.refractoryMs, config.manualThresholdEnabled,
+      config.manualDropCounts, config.minDropCounts, config.blinkCalEnabled, config.blinkCalRatio
+    ]);
+  }
+
+  // 会话期间的配置是【开始时快照】的（见 beginFormalSession 里的 config: currentConfig()），
+  // 所以这些输入必须在会话期间锁住 —— 否则操作者改了它、页面却照旧用快照，
+  // 而且没有任何提示，表现就是"输入了阈值但无法实时更新"（2026-09-23 实测事故）。
+  // 三个阈值类输入（fMinDrop / fBlinkCal / fBlinkCalRatio）原先漏在锁定名单外。
   function lockSessionInputs(locked) {
-    [ui.subjectId, ui.deviceId, ui.operatorId, ui.condition, ui.fMult, ui.fRefr, ui.manualThresholdEnabled].forEach(input => { input.disabled = locked; });
+    [ui.subjectId, ui.deviceId, ui.operatorId, ui.condition, ui.fMult, ui.fRefr, ui.manualThresholdEnabled,
+     ui.fMinDrop, ui.fBlinkCal, ui.fBlinkCalRatio].forEach(input => { input.disabled = locked; });
     ui.manualDrop.disabled = locked || !ui.manualThresholdEnabled.checked;
   }
 
   const OLED_TEXT_STORAGE_KEY = 'blink-oled-text-v1';
+  // 阈值 = max(下限, 手动值 / 自动项) —— 【取大值 ⇒ 只有一个在起作用】。
+  // 用户已经因为这个白调过三次（见 06-踩过的坑 坑 3、07-参数手册 §四）：
+  // 这次是「把下限输入 8，但手动阈值 12 顶着，阈值恒为 12」。
+  // 所以面板上不能只写一个数字，必须写清【现在是谁说了算】。
+  function thresholdDeciderText() {
+    const minDrop = boundedInputNumber(ui.fMinDrop, CFG.minDropCounts, 5, 200);
+    if (ui.manualThresholdEnabled.checked) {
+      const manual = boundedInputNumber(ui.manualDrop, 60, 5, 2000);
+      const eff = Math.max(minDrop, manual);
+      const who = manual > minDrop
+        ? `由【手动阈值 ${manual}】决定 → 改下限（现在 ${minDrop}）到 ${manual} 以下不会有任何效果`
+        : `由【下限 ${minDrop}】决定 → 改手动阈值（现在 ${manual}）到 ${minDrop} 以下不会有任何效果`;
+      return `手动模式：阈值 = max(下限 ${minDrop}, 手动 ${manual}) = ${eff} ADC 计数。${who}。`;
+    }
+    const mult = boundedInputNumber(ui.fMult, CFG.noiseMultiplier, 1, 12);
+    return `自动模式：阈值 = max(下限 ${minDrop}, σ × 抗干扰等级 ${mult})。`
+      + '下限与自动项哪个大由哪个决定 —— 看导出记录里的 detector.drop_counts。';
+  }
+
   function updateDebugControls() {
     ui.manualDrop.disabled = ui.manualThresholdEnabled.disabled || !ui.manualThresholdEnabled.checked;
-    ui.debugReadout.textContent = ui.manualThresholdEnabled.checked
-      ? `当前使用手动抗纹波阈值：下降至少 ${ui.manualDrop.value || 60} ADC 计数才会识别为眨眼。`
-      : '当前使用自动抗干扰设置。手动阈值仅建议在调试时使用。';
+    ui.debugReadout.textContent = thresholdDeciderText();
+  }
+
+  function markConsoleConfigDirty() {
+    S.consoleConfigDirty = true;
+    updateDebugControls();
+    if (ui.consoleStatus) {
+      ui.consoleStatus.textContent = '本机参数已修改，尚未保存到云端；本次测试将使用本机设置。';
+    }
   }
 
   function setDebugGateStatus(text) {
@@ -689,8 +733,14 @@
   ['pointerup', 'pointerleave', 'pointercancel'].forEach(type => ui.appTitle.addEventListener(type, () => {
     clearTimeout(debugPressTimer); debugPressTimer = null;
   }));
-  ui.manualThresholdEnabled.onchange = updateDebugControls;
-  ui.manualDrop.oninput = updateDebugControls;
+  // 调试台中的采集参数一旦编辑，本机值优先用于下一次测试；只有点“保存到云端”才同步出去。
+  // 测试期间这些输入会锁定，避免界面值和该次采集使用的快照不一致。
+  [ui.manualThresholdEnabled, ui.manualDrop, ui.fMinDrop, ui.fMult, ui.fRefr, ui.fBlinkCal, ui.fBlinkCalRatio]
+    .filter(Boolean)
+    .forEach(input => {
+      input.addEventListener('input', markConsoleConfigDirty);
+      input.addEventListener('change', markConsoleConfigDirty);
+    });
   const savedOledText = (() => {
     try { return JSON.parse(localStorage.getItem(OLED_TEXT_STORAGE_KEY) || '{}'); } catch (_) { return {}; }
   })();
@@ -913,14 +963,28 @@
   }
 
   // 把云端配置灌进控制台输入框；currentConfig() 仍然从这些输入框取值。
+  //
+  // ⚠️ 这一组字段必须和 consolePayload() 写进云端的字段**一一对应**，
+  //    也要和 index.html 的 applyConsoleConfig() 覆盖同一组。
+  //    2026-09-23 实测事故：consolePayload() 写 7 个参数，这里只回填 4 个
+  //    （漏了 minDropCounts / blinkCalEnabled / blinkCalRatio），
+  //    结果「在调试台改了阈值 → 保存到云端 → 刷新页面 → 输入框退回 HTML 默认值 12」，
+  //    看起来就像"输入了没反应"。少回填一个，那个参数就永远显示不出来。
+  //    值一律夹到合法范围 —— 云端节点是可写的，不能让它把阈值变成 NaN 或负数。
   function applyConsoleConfig(cfg) {
     if (!cfg) return;
-    const num = v => (Number.isFinite(Number(v)) ? Number(v) : null);
-    const mult = num(cfg.noiseMultiplier), refr = num(cfg.refractoryMs), manual = num(cfg.manualDropCounts);
-    if (mult !== null && ui.fMult) ui.fMult.value = String(mult);
-    if (refr !== null && ui.fRefr) ui.fRefr.value = String(refr);
-    if (manual !== null && ui.manualDrop) ui.manualDrop.value = String(manual);
+    const num = (v, fallback, lo, hi) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : fallback;
+    };
+    if (ui.fMult) ui.fMult.value = String(num(cfg.noiseMultiplier, CFG.noiseMultiplier, 1, 12));
+    if (ui.fRefr) ui.fRefr.value = String(num(cfg.refractoryMs, CFG.refractoryMs, 0, 2000));
+    if (ui.manualDrop) ui.manualDrop.value = String(num(cfg.manualDropCounts, 60, 5, 2000));
     if (ui.manualThresholdEnabled) ui.manualThresholdEnabled.checked = !!cfg.manualThresholdEnabled;
+    if (ui.fMinDrop) ui.fMinDrop.value = String(num(cfg.minDropCounts, CFG.minDropCounts, 5, 200));
+    if (ui.fBlinkCal) ui.fBlinkCal.checked = !!cfg.blinkCalEnabled;
+    if (ui.fBlinkCalRatio) ui.fBlinkCalRatio.value = String(num(cfg.blinkCalRatio, CFG.blinkCalRatio, 0.2, 1));
+    S.consoleConfigDirty = false;
     updateDebugControls();
   }
 
@@ -947,6 +1011,14 @@
     if (S.busy) return;
     if (!S.connected) return;
     if (S.phase === 'RUN' || S.phase === 'CAL' || S.phase === 'PAUSE') return;
+    if (S.consoleConfigDirty) {
+      hideCloudGate();
+      if (ui.consoleStatus) {
+        ui.consoleStatus.textContent = '本次测试使用刚修改的本机参数；保存到云端后才会同步到其他页面或设备。';
+      }
+      beginFormalSession();
+      return;
+    }
     showCloudGate('syncing');
     const cfg = await fetchConsoleConfig();
     if (cfg) { applyConsoleConfig(cfg); hideCloudGate(); beginFormalSession(); return; }
@@ -1080,13 +1152,21 @@
     ui.consoleStatus.textContent = '正在保存…';
     saveConsoleConfigToCloud().then(p => {
       const t = new Date(p.updatedAt).toLocaleTimeString();
-      ui.consoleStatus.textContent = '已保存到云端（' + t + '）：等级 ' + p.noiseMultiplier + '、间隔 ' + p.refractoryMs + ' ms。';
+      S.consoleConfigDirty = detectorConfigFingerprint(currentConfig()) !== detectorConfigFingerprint(p);
+      ui.consoleStatus.textContent = '已保存到云端（' + t + '）：等级 ' + p.noiseMultiplier
+        + '、间隔 ' + p.refractoryMs + ' ms、下限 ' + p.minDropCounts
+        + '、手动 ' + (p.manualThresholdEnabled ? p.manualDropCounts : '关')
+        + '、方案C ' + (p.blinkCalEnabled ? ('开 ' + p.blinkCalRatio) : '关') + '。'
+        + (S.consoleConfigDirty ? '保存期间参数又有改动，当前值尚未同步。' : '');
     }).catch(err => { ui.consoleStatus.textContent = '保存失败：' + ((err && err.message) || err); });
   };
   if (ui.btnConsoleLoad) ui.btnConsoleLoad.onclick = () => {
     ui.consoleStatus.textContent = '正在读取…';
     loadConsoleConfigFromCloud().then(cfg => {
-      ui.consoleStatus.textContent = '已从云端读取：等级 ' + cfg.noiseMultiplier + '、间隔 ' + cfg.refractoryMs + ' ms。';
+      ui.consoleStatus.textContent = '已从云端读取：等级 ' + cfg.noiseMultiplier
+        + '、间隔 ' + cfg.refractoryMs + ' ms、下限 ' + ui.fMinDrop.value
+        + '、手动 ' + (ui.manualThresholdEnabled.checked ? ui.manualDrop.value : '关')
+        + '、方案C ' + (ui.fBlinkCal.checked ? ('开 ' + ui.fBlinkCalRatio.value) : '关') + '。';
     }).catch(err => { ui.consoleStatus.textContent = '读取失败：' + ((err && err.message) || err); });
   };
 
@@ -2279,6 +2359,11 @@
       ui.fMult.value = session.config.noiseMultiplier; ui.fRefr.value = session.config.refractoryMs;
       ui.manualThresholdEnabled.checked = !!session.config.manualThresholdEnabled;
       ui.manualDrop.value = session.config.manualDropCounts || 60;
+      // 这三个也必须回填，否则载入一条历史记录后，界面显示的阈值
+      // 和那条记录当时【真正用过】的阈值对不上（旧记录没有这些字段时保持原值）
+      if (Number.isFinite(session.config.minDropCounts)) ui.fMinDrop.value = session.config.minDropCounts;
+      if (ui.fBlinkCal) ui.fBlinkCal.checked = !!session.config.blinkCalEnabled;
+      if (Number.isFinite(session.config.blinkCalRatio)) ui.fBlinkCalRatio.value = session.config.blinkCalRatio;
       lockSessionInputs(false); updateDebugControls(); fillRangeInputs(); setState('已载入', 'bluec'); await analyze();
     } catch (err) { console.error(err); alert(`载入失败：${err.message || err}`); }
     finally { S.busy = false; refreshButtons(); }

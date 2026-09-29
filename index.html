@@ -593,7 +593,7 @@
       minWidthMs: CFG.minWidthMs, maxWidthMs: CFG.maxWidthMs,
       refractoryMs: S.consoleConfig.refractoryMs, baselineAlpha: CFG.baselineAlpha,
       manualThresholdEnabled: S.consoleConfig.manualThresholdEnabled,
-      manualDropCounts: Math.max(CFG.minDropCounts, S.consoleConfig.manualDropCounts)
+      manualDropCounts: Math.max(5, Math.min(2000, S.consoleConfig.manualDropCounts))
     };
   }
 
@@ -975,7 +975,7 @@
       noiseMultiplier: num(cfg.noiseMultiplier, CFG.noiseMultiplier, 1, 12),
       refractoryMs: num(cfg.refractoryMs, CFG.refractoryMs, 0, 2000),
       manualThresholdEnabled: !!cfg.manualThresholdEnabled,
-      manualDropCounts: num(cfg.manualDropCounts, 60, CFG.minDropCounts, 2000),
+      manualDropCounts: num(cfg.manualDropCounts, 60, 5, 2000),
       minDropCounts: num(cfg.minDropCounts, CFG.minDropCounts, 5, 200),
       blinkCalEnabled: !!cfg.blinkCalEnabled,
       blinkCalRatio: num(cfg.blinkCalRatio, CFG.blinkCalRatio, 0.2, 1)
