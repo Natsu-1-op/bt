@@ -2485,7 +2485,23 @@
 
   // Import is atomic and always allocates fresh local identifiers: never overwrite.
   function validateImport(data) {
-    const bundles = data && data.schema === 'blink-export-all/v1' ? data.sessions : [data];
+    // 对比文件（blink-analysis/v1）= 一份完整原始记录 + 一次试调的结果。
+    // 之前这里只认 blink-export-all/v1 和 blink-export/v1，于是自己导出的对比文件
+    // 自己导不回来（报「文件结构或数据列不受支持」）。现在取原始记录导入，
+    // 并把试调结果挂到 metadata 上 —— 重放这条记录时自动把试调标记恢复出来。
+    let bundles;
+    if (data && data.schema === 'blink-export-all/v1') bundles = data.sessions;
+    else if (data && data.schema === 'blink-analysis/v1') {
+      const orig = data.original, re = data.reanalysis;
+      if (!orig || typeof orig !== 'object') throw new Error('对比文件缺少 original（原始记录）。');
+      if (!re || typeof re !== 'object' || !Array.isArray(re.events) || !Number.isFinite(re.drop_counts)) {
+        throw new Error('对比文件缺少有效的 reanalysis（试调结果）。');
+      }
+      if (re.events.length > CFG.maxEvents * 4) throw new Error('对比文件里的试调事件过多。');
+      for (const ev of re.events) if (!ev || !Number.isFinite(ev.t)) throw new Error('对比文件里的试调事件无效。');
+      // 浅拷贝一层再挂：importData 的既有约定是「绝不改动调用方传进来的对象」
+      bundles = [{ ...orig, metadata: { ...orig.metadata, reanalysis: re } }];
+    } else bundles = [data];
     if (!Array.isArray(bundles) || !bundles.length || bundles.length > 200) throw new Error('请选择本系统导出的数据文件（一次最多 200 条）。');
     const columns = ['phone_timeline_ms','sample_utc_ms','phone_received_utc_ms','adc_raw','adc_filtered','segment_id','flags'];
     let total = 0;
@@ -2545,7 +2561,10 @@
         } catch(err) { tx.abort(); reject(err); }
       });
       await refreshSessionList(); ui.sessionList.value = ids[0];
-      ui.help.textContent = `已导入 ${ids.length} 条数据，原始时间戳未改变。请选择记录并打开；不会覆盖已有记录。`;
+      const restored = bundles.some(b => b.metadata && b.metadata.reanalysis);
+      ui.help.textContent = `已导入 ${ids.length} 条数据，原始时间戳未改变。`
+        + (restored ? '对比文件里的试调结果已一并保留，打开并重放时会自动恢复。' : '')
+        + '请选择记录并打开；不会覆盖已有记录。';
       return ids;
     } finally { S.busy = false; refreshButtons(); }
   }
@@ -2557,7 +2576,7 @@
     const trialStatus=document.getElementById('trialStatus');if(trialStatus)trialStatus.textContent='先开始重放再试调。未导出的试调结果不会保存；原始数据不受影响。';
     const originalConfig=document.getElementById('originalReplayConfig');if(originalConfig)originalConfig.textContent='';
     const label = document.getElementById('replayStatus');
-    if (label) label.textContent = '重放仅查看已保存波形与原始事件，不改写数据。';
+    if (label) label.textContent = '重放仅查看已保存波形与原始事件，不改写数据；换阈值看效果请用「试调阈值」。';
     const button = document.getElementById('btnReplay');
     if (button) button.textContent = '开始重放';
     for(const id of ['btnReplayStop','replaySeek']) {
@@ -2576,7 +2595,15 @@
   }
   async function applyReplayTrial() {
     const r=S.replay;
-    if(!isConsolePage || !S.consoleAuthenticated || !consoleSessionValid() || !r)return;
+    if(!isConsolePage || !r)return;
+    // 以前这里把「登录态过期」和「没有重放」一起 return 掉了 —— 静默什么都不做。
+    // 后果：控制台会话 30 分钟过期后，改了试调阈值面板毫无反应、波形黄线也不变，
+    // 看上去完全像功能坏了。现在明确说出原因并提示重新登录。
+    if(!S.consoleAuthenticated || !consoleSessionValid()){
+      const expiredStatus=document.getElementById('trialStatus');
+      if(expiredStatus)expiredStatus.textContent='登录已过期（控制台会话 30 分钟），点页面标题重新登录后再试调。原始数据不受影响。';
+      return;
+    }
     const revision=(r.trialRevision||0)+1;r.trialRevision=revision;
     const input=document.getElementById('trialDrop'), gap=document.getElementById('trialRefractory');
     const drop=Number(input.value), refractory=Number(gap.value);
@@ -2623,7 +2650,26 @@
         document.getElementById('trialDrop').value=originalDrop ?? '';
         document.getElementById('trialRefractory').value=original.config.refractoryMs;
         document.getElementById('originalReplayConfig').textContent=JSON.stringify({config:original.config,detector:original.detector,blink_calibration:original.blink_calibration},null,2);
-        document.getElementById('trialStatus').textContent=`原始阈值 ${originalDrop ?? '未记录'}；原始 ${events.length} 次。修改下方试调参数会重算当前记录，原始数据保持不变。`;
+        document.getElementById('trialStatus').textContent=`原始阈值 ${originalDrop ?? '未记录'}；原始 ${events.length} 次。波形上的黄线是记录当时保存下来的事件；想用别的阈值看效果，改下面的试调参数（会重算并单独显示，不覆盖原始数据）。`;
+        // 这条记录是从对比文件导入的？把当时那次试调恢复出来，否则「导出对比」等于有去无回。
+        // 注意 S.session 是库里那条**扁平**记录（metadata 的字段被平铺了），不是 {metadata:{...}}。
+        const re = original.reanalysis || (original.metadata && original.metadata.reanalysis);
+        if (re && Array.isArray(re.events) && Number.isFinite(re.drop_counts)) {
+          const trialConf = { ...original.config, manualThresholdEnabled: true, manualDropCounts: re.drop_counts,
+                              minDropCounts: 0,
+                              refractoryMs: Number.isFinite(re.config && re.config.refractoryMs) ? re.config.refractoryMs : original.config.refractoryMs };
+          S.replay.trial = {
+            config: trialConf, drop_counts: re.drop_counts,
+            events: re.events.map(ev => ({ t: ev.t, utcMs: ev.utcMs, width: ev.width, amp: ev.amp })),
+            computed_utc_ms: re.computed_utc_ms, algorithm: re.algorithm,
+            calibration_policy: re.calibration_policy, restored_from_file: true,
+          };
+          document.getElementById('trialDrop').value = re.drop_counts;
+          document.getElementById('trialRefractory').value = trialConf.refractoryMs;
+          document.getElementById('trialStatus').textContent =
+            `已从对比文件恢复试调：阈值 ${re.drop_counts} / ${S.replay.trial.events.length} 次；原始 ${events.length} 次。`
+            + '改参数会按新值重算，原始数据不受影响。';
+        }
         document.getElementById('replaySeek').max=String(S.replay.end-S.replay.start);
         seekReplay(S.replay.start);
         if(S.session.config.blinkCalEnabled && !Number.isFinite(S.session.blink_calibration?.run_baseline)) ui.help.textContent='旧记录缺少完整标定状态：重放展示原始事件，不保证重新分析与原始计数一致。';

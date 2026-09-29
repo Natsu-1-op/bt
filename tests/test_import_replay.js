@@ -80,6 +80,34 @@ const {loadPage}=require('./helpers/page');
    e.w.document.getElementById('trialReset').click();assert.equal(a.S.replay.trial,null);
    assert.equal(JSON.stringify(a.S.session),snapshot,'replay never changes record');
    a.stopReplay();assert.equal(a.S.replay,null);
+
+   // —— 对比文件必须能导回来 ——
+   // 曾经导不回来：validateImport 只认 blink-export-all/v1 和 blink-export/v1，
+   // 自己导出的 blink-analysis/v1 会被判「文件结构或数据列不受支持」。
+   const comparedSaved=JSON.stringify(compared);
+   const cmpIds=await a.importData(compared);
+   assert.equal(cmpIds.length,1,'comparison file imports as one record');
+   assert.equal(JSON.stringify(compared),comparedSaved,'import must not mutate the comparison input');
+   const cmpBundle=await a.buildBundle(await a.readSessionRecord(cmpIds[0]));
+   // 用 JSON 归一化后再比：对比文件是走 JSON 落盘的，JSON 会把 -0 变成 0，
+   // 而 IndexedDB（结构化克隆）保留 -0 —— 直接 deepEqual 会因为这个假差异挂掉。
+   // 比 JSON 形式才是「文件往返」的正确语义。
+   assert.equal(JSON.stringify(cmpBundle.sample_chunks.flatMap(c=>c.rows)),
+                JSON.stringify(compared.original.sample_chunks.flatMap(c=>c.rows)),
+                'imported rows survive the comparison round-trip');
+   assert.equal(cmpBundle.sample_chunks.flatMap(c=>c.rows).length,2000);
+   // 打开并重放：当时那次试调应该自动恢复，否则「导出对比」等于有去无回
+   a.ui.sessionList.value=cmpIds[0];await a.loadSelectedSession();await a.startReplay();
+   assert(a.S.replay.trial,'trial restored from comparison file');
+   assert.equal(a.S.replay.trial.drop_counts,compared.reanalysis.drop_counts);
+   assert.equal(a.S.replay.trial.events.length,compared.reanalysis.events.length);
+   assert.equal(a.S.replay.trial.restored_from_file,true);
+   assert.equal(e.w.document.getElementById('trialDrop').value,String(compared.reanalysis.drop_counts));
+   a.stopReplay();
+   // 残缺的对比文件必须明确拒收，而不是导进一条缺试调的记录
+   await assert.rejects(()=>a.importData({schema:'blink-analysis/v1',original:compared.original}),/reanalysis/);
+   await assert.rejects(()=>a.importData({schema:'blink-analysis/v1',reanalysis:compared.reanalysis}),/original/);
+
    a.S.phase='RUN';await assert.rejects(()=>a.importData(original));
    assert.equal(e.errors.length,0,e.errors.join('\n'));
   }finally{e.close();}
