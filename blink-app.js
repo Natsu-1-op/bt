@@ -371,6 +371,9 @@
     for(const id of ['btnReplayStop','replaySeek']) {
       const b=document.getElementById(id);if(b)b.disabled=S.busy || !S.replay;
     }
+    for(const id of ['trialDrop','trialRefractory','trialReset','trialExport']) {
+      const b=document.getElementById(id);if(b)b.disabled=S.busy || !S.replay;
+    }
   }
 
   // ------------------------------------------------------------------
@@ -2139,13 +2142,23 @@
       // New records retain the complete Plan C waveform and the exact state at
       // the transition to formal counting. Replay the filter but exclude those
       // calibration blinks, then restore the same baseline and refractory time.
-      if (!ready && blinkCalibration && Number.isFinite(blinkCalibration.end_timeline_ms) && Number.isFinite(blinkCalibration.run_baseline)) {
+      // 守卫必须覆盖这段代码**实际用到的每一个**字段。少验一个的后果不是报错，是静默出错：
+      //   refractory_until_ms 缺失 → refractoryUntil = undefined → `t >= undefined` 恒假
+      //                             → 一次眨眼都判不出来，而且不报警；
+      //   threshold 缺失 + fixedDrop 非有限 → drop = undefined → thDown = NaN，同上。
+      // 两者都退回常规标定路径（不是静默 0 次）。
+      if (!ready && blinkCalibration
+          && Number.isFinite(blinkCalibration.end_timeline_ms)
+          && Number.isFinite(blinkCalibration.run_baseline)
+          && Number.isFinite(blinkCalibration.refractory_until_ms)) {
         if (t <= blinkCalibration.end_timeline_ms) return null;
         const drop = Number.isFinite(fixedDrop) ? fixedDrop : blinkCalibration.threshold;
-        baseline = blinkCalibration.run_baseline;
-        thDown = baseline - drop; thUp = baseline - drop * config.releaseRatio;
-        refractoryUntil = blinkCalibration.refractory_until_ms;
-        ready = true;
+        if (Number.isFinite(drop)) {
+          baseline = blinkCalibration.run_baseline;
+          thDown = baseline - drop; thUp = baseline - drop * config.releaseRatio;
+          refractoryUntil = blinkCalibration.refractory_until_ms;
+          ready = true;
+        }
       }
       if (calStart === null) calStart = t;
       if (!ready) {
@@ -2539,6 +2552,10 @@
 
   function stopReplay() {
     S.replay = null;
+    document.body.classList.remove('replay-focused');
+    for(const id of ['trialDrop','trialRefractory','trialReset','trialExport']){const el=document.getElementById(id);if(el)el.disabled=true;}
+    const trialStatus=document.getElementById('trialStatus');if(trialStatus)trialStatus.textContent='先开始重放再试调。未导出的试调结果不会保存；原始数据不受影响。';
+    const originalConfig=document.getElementById('originalReplayConfig');if(originalConfig)originalConfig.textContent='';
     const label = document.getElementById('replayStatus');
     if (label) label.textContent = '重放仅查看已保存波形与原始事件，不改写数据。';
     const button = document.getElementById('btnReplay');
@@ -2555,7 +2572,34 @@
     r.visible = r.rows.slice(Math.max(0,lo-4000),lo).map(row=>({t:row[0],raw:row[3],filt:row[4]}));
     const row=r.rows[Math.max(0,lo-1)];
     document.getElementById('replaySeek').value = String(r.position-r.start);
-    document.getElementById('replayStatus').textContent = `${((r.position-r.start)/1000).toFixed(1)} / ${((r.end-r.start)/1000).toFixed(1)} 秒 · 原始眨眼 ${r.events.filter(e=>e.t<=r.position).length} 次 · ${iso(row[1])}`;
+    document.getElementById('replayStatus').textContent = `${((r.position-r.start)/1000).toFixed(1)} / ${((r.end-r.start)/1000).toFixed(1)} 秒 · 原始 ${r.events.filter(e=>e.t<=r.position).length} 次${r.trial ? ' / 试调 '+r.trial.events.filter(e=>e.t<=r.position).length+' 次' : ''} · ${iso(row[1])}`;
+  }
+  async function applyReplayTrial() {
+    const r=S.replay;
+    if(!isConsolePage || !S.consoleAuthenticated || !consoleSessionValid() || !r)return;
+    const revision=(r.trialRevision||0)+1;r.trialRevision=revision;
+    const input=document.getElementById('trialDrop'), gap=document.getElementById('trialRefractory');
+    const drop=Number(input.value), refractory=Number(gap.value);
+    const status=document.getElementById('trialStatus');
+    r.trial=null;
+    if(input.value.trim()==='' || gap.value.trim()==='' || !Number.isFinite(drop) || drop<0 || drop>4095 || !Number.isFinite(refractory) || refractory<0 || refractory>10000){status.textContent='请输入有效阈值（0–4095）和间隔（0–10000 ms）。';return;}
+    status.textContent='正在按试调参数重算整条记录…';
+    const config={...r.original.config,manualThresholdEnabled:true,manualDropCounts:drop,minDropCounts:0,refractoryMs:refractory};
+    const detector=makeOfflineDetector(config,drop,r.original.blink_calibration);
+    const events=[];
+    for(let i=0;i<r.rows.length;i++){
+      if(i%2000===0){await new Promise(resolve=>setTimeout(resolve,0));if(S.replay!==r || r.trialRevision!==revision)return;}
+      const ev=detector(r.rows[i]);if(ev)events.push(ev);
+    }
+    r.trial={config,drop_counts:drop,events,computed_utc_ms:Date.now(),algorithm:'replay-fixed-threshold/v1',calibration_policy:'reuse-original-calibration-boundary-and-baseline'};
+    status.textContent=`原始阈值 ${r.originalDrop ?? '未记录'} / ${r.events.length} 次 → 试调阈值 ${drop} / ${events.length} 次。仅改变回放标记；不覆盖原始参数和事件。`;
+    seekReplay(r.position);
+  }
+  async function exportReplayComparison() {
+    const r=S.replay;if(!r || !r.trial || !isConsolePage || !S.consoleAuthenticated || !consoleSessionValid())throw new Error('请先完成一次有效的重放试调。');
+    const trial=JSON.parse(JSON.stringify(r.trial));
+    const original=await buildBundle(JSON.parse(JSON.stringify(r.original)));
+    saveBlob(`blink-comparison-${r.original.id}.json`,'application/json;charset=utf-8',[JSON.stringify({schema:'blink-analysis/v1',original,reanalysis:trial})]);
   }
   async function startReplay() {
     if (!isConsolePage || !S.consoleAuthenticated || !consoleSessionValid()) throw new Error('请在控制台登录后重放数据。');
@@ -2572,7 +2616,14 @@
         if(!rows.length)throw new Error('这条记录没有可重放的采样点。');
         const events=(await readEvents(id)).filter(e=>e.type==='blink').map(e=>({t:e.timeline_ms,amp:e.amplitude_counts,width:e.width_ms}));
         S.viewingHistory=true;
-        S.replay={rows,events,start:rows[0][0],end:rows[rows.length-1][0],position:rows[0][0],playing:true,wall:performance.now(),visible:[]};
+        const original=JSON.parse(JSON.stringify(S.session));
+        const originalDrop=original.blink_calibration?.threshold ?? original.detector?.drop_counts ?? null;
+        S.replay={rows,events,original,originalDrop,start:rows[0][0],end:rows[rows.length-1][0],position:rows[0][0],playing:true,wall:performance.now(),visible:[]};
+        document.body.classList.add('replay-focused');
+        document.getElementById('trialDrop').value=originalDrop ?? '';
+        document.getElementById('trialRefractory').value=original.config.refractoryMs;
+        document.getElementById('originalReplayConfig').textContent=JSON.stringify({config:original.config,detector:original.detector,blink_calibration:original.blink_calibration},null,2);
+        document.getElementById('trialStatus').textContent=`原始阈值 ${originalDrop ?? '未记录'}；原始 ${events.length} 次。修改下方试调参数会重算当前记录，原始数据保持不变。`;
         document.getElementById('replaySeek').max=String(S.replay.end-S.replay.start);
         seekReplay(S.replay.start);
         if(S.session.config.blinkCalEnabled && !Number.isFinite(S.session.blink_calibration?.run_baseline)) ui.help.textContent='旧记录缺少完整标定状态：重放展示原始事件，不保证重新分析与原始计数一致。';
@@ -2617,8 +2668,17 @@
       <label class="tiny" for="replaySeek">拖动定位</label>
       <input id="replaySeek" type="range" min="0" max="0" step="1" value="0">
       <p id="replayStatus" class="tiny">打开记录后开始重放；原始事件不等同于人工真值。</p>
+      <details class="trial-panel"><summary>试调阈值 · 原始参数保留</summary>
+        <div class="trial-fields"><label>下降阈值（ADC）<input id="trialDrop" type="number" min="0" max="4095" step="0.1"></label><label>最短间隔（ms）<input id="trialRefractory" type="number" min="0" max="10000" step="10"></label></div>
+        <p id="trialStatus" class="tiny" role="status">先开始重放，再修改参数；修改仅用于当前记录试算，不用于正在采集的数据。</p>
+        <details><summary>查看原始阈值及完整参数</summary><pre id="originalReplayConfig" class="tiny"></pre></details>
+        <div class="trial-actions"><button id="trialReset" type="button" class="ghost">恢复原始标记</button><button id="trialExport" type="button" class="ghost">导出原始＋试调数据</button></div>
+      </details>
     </div>`;
   document.getElementById('scope').closest('section').insertAdjacentElement('afterend',dataPanel);
+  const replayViewport=document.createElement('div');replayViewport.className='replay-viewport';
+  const wave=document.getElementById('scope').closest('section');
+  wave.before(replayViewport);replayViewport.append(wave,dataPanel.querySelector('.replay-bar'));
   const records=document.getElementById('replayRecords');
   const oldRecordField=ui.sessionList.parentElement, oldLoadField=ui.btnLoad.parentElement;
   const recordLabel=document.createElement('label');recordLabel.htmlFor='sessionList';recordLabel.textContent='本机保存的测试';
@@ -2640,7 +2700,14 @@
   };
   document.getElementById('btnReplay').onclick=()=>startReplay().catch(err=>alert('重放失败：'+err.message));
   document.getElementById('btnReplayStop').onclick=stopReplay;
-  document.getElementById('replaySeek').oninput=e=>{if(S.replay)seekReplay(S.replay.start+Number(e.target.value));};
+  const seek=document.getElementById('replaySeek');
+  seek.addEventListener('pointerdown',()=>{if(S.replay){S.replay.scrubbing=true;S.replay.resumeAfterScrub=S.replay.playing;S.replay.playing=false;}});
+  const finishScrub=()=>{if(S.replay?.scrubbing){S.replay.scrubbing=false;S.replay.playing=S.replay.resumeAfterScrub;S.replay.wall=performance.now();}};
+  window.addEventListener('pointerup',finishScrub);window.addEventListener('pointercancel',finishScrub);
+  seek.oninput=e=>{if(S.replay)seekReplay(S.replay.start+Number(e.target.value));};
+  for(const id of ['trialDrop','trialRefractory'])document.getElementById(id).oninput=()=>applyReplayTrial().catch(err=>{document.getElementById('trialStatus').textContent='重算失败：'+err.message;});
+  document.getElementById('trialReset').onclick=()=>{const r=S.replay;if(!r)return;r.trialRevision=(r.trialRevision||0)+1;r.trial=null;document.getElementById('trialDrop').value=r.originalDrop??'';document.getElementById('trialRefractory').value=r.original.config.refractoryMs;document.getElementById('trialStatus').textContent='已恢复原始事件标记，原始参数未改变。';seekReplay(r.position);};
+  document.getElementById('trialExport').onclick=()=>exportReplayComparison().catch(err=>alert(err.message));
   }
   ui.btnExportBundle.onclick = () => { exportBundle().catch(err => { console.error(err); alert(`导出失败：${err.message || err}`); }); };
   ui.btnLoad.onclick = () => { loadSelectedSession().catch(console.error); };
@@ -2763,7 +2830,7 @@
         sctx.setLineDash([]);
       });
     }
-    (S.replay ? S.replay.events : S.events).filter(e => e.t >= t0 && e.t <= t1).forEach(e => {
+    (S.replay ? (S.replay.trial?.events || S.replay.events) : S.events).filter(e => e.t >= t0 && e.t <= t1).forEach(e => {
       sctx.strokeStyle = '#f4bf4f'; sctx.lineWidth = 1;
       sctx.beginPath(); sctx.moveTo(x(e.t), 0); sctx.lineTo(x(e.t), H); sctx.stroke();
     });

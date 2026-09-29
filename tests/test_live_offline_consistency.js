@@ -7,6 +7,8 @@ const { readPageSource, extractFunction } = require('./helpers/source');
 // 已经因此出过两次事故：
 //   · 加了 calibrationSkipMs 但离线没跳 -> 两边的标定窗口不一样
 //   · 方案 C 的阈值是现场量出来的，离线却自己重算 -> 回看直接显示 0 次眨眼
+//   · 标定状态的守卫少验了一个字段（用了 refractory_until_ms 却没验它）
+//     -> `t >= undefined` 恒假 -> 静默判出 0 次眨眼，而且不报错不报警（见第五节）
 const fs = require('fs');
 const src = readPageSource(process.argv[2] || 'index.html');
 
@@ -121,6 +123,43 @@ console.log('\n=== 四、analyze() 确实把实时阈值传下去了 ===\n');
   chk(calls.length === 1, 'analyze() 传了 liveDrop', String(calls.length));
   chk(!!liveDropDef, 'liveDrop 取自会话里记录的 blink_calibration.threshold');
   chk(/Number\.isFinite\(S\.session\.blink_calibration\.threshold\)/.test(src), '取阈值前做了有限性检查');
+}
+
+console.log('\n=== 五、方案 C 标定状态：字段不全必须退回，不能静默判 0 ===\n');
+{
+  // 事故原型：makeOfflineDetector 的守卫只检查了 end_timeline_ms 和 run_baseline，
+  // 但函数体还用 refractory_until_ms。少这个字段 → refractoryUntil = undefined
+  // → `t >= undefined` 恒假 → 一次眨眼都判不出来，而且**不报错、不报警**。
+  // 这类"静默 0 次"比崩溃危险得多：回看显示 0 次，看起来像"这人真的没眨眼"。
+  function runOfflineWithCal(rows, drop, cal) {
+    const config = {
+      maLength: 8, refractoryMs: 300, minWidthMs: 40, maxWidthMs: 800, releaseRatio: 0.45,
+      baselineAlpha: 0.0005, calibrationMs: 3000, calibrationSkipMs: 300,
+      minDropCounts: 12, noiseMultiplier: 4, manualThresholdEnabled: false, blinkCalEnabled: true,
+    };
+    const detector = makeOfflineDetector(config, drop, cal);
+    let n = 0;
+    for (const r of rows) if (detector(r)) n++;
+    return n;
+  }
+  const rows = synth({ seconds: 40, noise: 1, blinks: [20, 22, 30, 18] });
+  const complete = { end_timeline_ms: 10000, run_baseline: 2048, refractory_until_ms: 10300, threshold: 8 };
+  const nFull = runOfflineWithCal(rows, 8, complete);
+  const nNoCal = runOfflineWithCal(rows, 8, null);
+  chk(nFull > 0, '标定状态完整时能正常判决', `${nFull} 次`);
+  chk(nFull < nNoCal, '标定窗口内的眨眼被排除掉', `${nFull} < ${nNoCal}`);
+
+  for (const [missing, cal] of [
+    ['refractory_until_ms', { end_timeline_ms: 10000, run_baseline: 2048, threshold: 8 }],
+    ['run_baseline',        { end_timeline_ms: 10000, refractory_until_ms: 10300, threshold: 8 }],
+    ['end_timeline_ms',     { run_baseline: 2048, refractory_until_ms: 10300, threshold: 8 }],
+  ]) {
+    const n = runOfflineWithCal(rows, 8, cal);
+    chk(n > 0, `缺 ${missing} 时退回常规标定，而不是静默 0 次`, `${n} 次`);
+  }
+  // threshold 缺失 + 没传 fixedDrop → drop = undefined → thDown = NaN，同样是静默 0 次
+  const nNoThreshold = runOfflineWithCal(rows, null, { end_timeline_ms: 10000, run_baseline: 2048, refractory_until_ms: 10300 });
+  chk(nNoThreshold > 0, 'threshold 缺失且未传固定阈值时退回常规标定', `${nNoThreshold} 次`);
 }
 
 console.log(bad ? `\n❌ ${bad} 项不通过` : '\n✅ 全部通过');
