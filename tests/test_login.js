@@ -5,6 +5,10 @@ const {fakeCloud}=require('./helpers/cloud');
  const e=loadPage('test.html',{setup:w=>{w.firebase=fakeCloud().cloud;}});
  try{
   const a=e.app;
+  for(const char of ['.','#','$','/','[',']','\u0001','\u007f']){
+   a.ui.loginPass.value='bad'+char+'key';await a.submitConsoleLogin();
+   assert.match(a.ui.loginError.textContent,/格式不合法/);
+  }
   assert(!a.ui.loginGate.classList.contains('hidden'));
   assert(a.ui.debugPanel.classList.contains('hidden'));
   a.ui.loginPass.value='wrong';await a.submitConsoleLogin();

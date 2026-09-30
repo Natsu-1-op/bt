@@ -103,6 +103,49 @@ const {loadPage}=require('./helpers/page');
    assert.equal(a.S.replay.trial.events.length,compared.reanalysis.events.length);
    assert.equal(a.S.replay.trial.restored_from_file,true);
    assert.equal(e.w.document.getElementById('trialDrop').value,String(compared.reanalysis.drop_counts));
+   await a.exportReplayComparison();
+   const repeated=JSON.parse(await e.downloads.at(-1).text());
+   assert.equal(repeated.original.metadata.reanalysis,undefined,'old trial must not be nested in original');
+   for(const mutate of [
+     b=>b.reanalysis.drop_counts=-1,
+     b=>delete b.reanalysis.config,
+     b=>b.reanalysis.config.refractoryMs=-1,
+     b=>b.reanalysis.config.maLength=999,
+     b=>b.reanalysis.events=[{t:1e10,utcMs:1,width:10,amp:1}],
+   ]){
+     const malformed=JSON.parse(comparedSaved);mutate(malformed);
+     await assert.rejects(()=>a.importData(malformed));
+     const plain={...malformed.original,metadata:{...malformed.original.metadata,reanalysis:malformed.reanalysis}};
+     await assert.rejects(()=>a.importData(plain),'same validation on plain-file metadata');
+     await assert.rejects(()=>a.importData({schema:'blink-export-all/v1',sessions:[plain]}));
+   }
+   const retained=a.S.replay;
+   e.w.sessionStorage.clear();a.S.replay.playing=true;a.tickReplay();
+   assert.equal(a.S.replay,retained,'expiry pauses without destroying trial');
+   assert.equal(retained.playing,false);
+   a.openDebugPanel();assert.equal(a.S.replay,retained,'login dialog retains trial');
+   e.w.sessionStorage.setItem('blink-console-auth-v1',JSON.stringify({expiresAt:e.w.Date.now()+1800000}));a.showConsole('');
+   a.stopReplay();
+   const damaged=await a.readSessionRecord(cmpIds[0]);
+   damaged.reanalysis={events:[],drop_counts:5};
+   const db=await a.openDb();
+   await new Promise((resolve,reject)=>{
+     const tx=db.transaction('sessions','readwrite');tx.objectStore('sessions').put(damaged);
+     tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);
+   });
+   a.S.session=null;a.ui.sessionList.value=damaged.id;await a.loadSelectedSession();
+   const storedBefore=JSON.stringify(await a.readSessionRecord(damaged.id));
+   await a.startReplay();
+   assert(a.S.replay.playing,'damaged optional trial must not block playback');
+   assert.equal(a.S.replay.trial,null);
+   assert.match(e.w.document.getElementById('trialStatus').textContent,/旧试调结果无法恢复/);
+   await e.clock.tickAsync(100);assert(a.S.replay.position>a.S.replay.start);
+   e.w.document.getElementById('trialDrop').value='2';
+   const repair=a.applyReplayTrial();await e.clock.tickAsync(100);await repair;
+   await a.exportReplayComparison();
+   const repaired=JSON.parse(await e.downloads.at(-1).text());
+   assert(a.validateImport(repaired).length===1,'new trial exports a valid comparison from old damaged records');
+   assert.equal(JSON.stringify(await a.readSessionRecord(damaged.id)),storedBefore,'fallback never edits stored data');
    a.stopReplay();
    // 残缺的对比文件必须明确拒收，而不是导进一条缺试调的记录
    await assert.rejects(()=>a.importData({schema:'blink-analysis/v1',original:compared.original}),/reanalysis/);

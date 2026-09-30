@@ -9,6 +9,14 @@ if(!fs.statSync(dest).isDirectory())throw new Error('Existing delivery folder re
 const hash=p=>crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 function firmwareFiles(dir){return fs.readdirSync(dir,{withFileTypes:true}).flatMap(e=>{const p=path.join(dir,e.name);return e.isDirectory()?firmwareFiles(p):/\.(hex|bin|c|h|s|uvprojx|uvoptx)$/i.test(p)?[p]:[];});}
 const before=new Map(firmwareFiles(dest).map(p=>[p,hash(p)]));
+// Recover the obsolete delivery copy outside the shared folder; preserve source.
+const oldRules=path.join(dest,'database.rules.json');
+if(fs.existsSync(oldRules)){
+  if(!fs.lstatSync(oldRules).isFile())throw new Error('Unexpected rules path type');
+  const recovery=fs.mkdtempSync(path.join(root,'_backup','delivery-rules-'));
+  fs.renameSync(oldRules,path.join(recovery,'database.rules.json'));
+  console.log('Moved obsolete delivery rules copy to '+recovery);
+}
 const files=['index.html','test.html','blink-app.js','package.json','package-lock.json'];
 function copy(rel,filter){fs.cpSync(path.join(root,rel),path.join(dest,rel),{recursive:true,...(filter?{filter}:{})});}
 // AI-SYNC 里的 evidence-* 是屏幕截图（数 MB，含桌面内容），不该随交付包外发。
@@ -16,6 +24,13 @@ const skipEvidence=src=>!/^evidence-/.test(path.basename(src));
 for(const rel of [...files,'tests'])copy(rel);
 copy('AI-SYNC',skipEvidence);
 for(const rel of ['tools/run-page.js','tools/test-all.js','tools/package-release.js'])copy(rel);
+function assertNoRules(dir){
+  for(const e of fs.readdirSync(dir,{withFileTypes:true})){
+    if(e.name==='database.rules.json')throw new Error('Rules file must not be present in delivery folder: '+path.join(dir,e.name));
+    if(e.isDirectory())assertNoRules(path.join(dir,e.name));
+  }
+}
+assertNoRules(dest);
 for(const [p,digest]of before)if(hash(p)!==digest)throw new Error('Firmware unexpectedly changed: '+p);
 const zip=path.join(root,name+'.zip');
 const backup=path.join(root,'_backup','release-before-web-sync');
@@ -23,8 +38,10 @@ fs.mkdirSync(backup,{recursive:true});
 if(fs.existsSync(zip)&&!fs.existsSync(path.join(backup,name+'.zip')))fs.copyFileSync(zip,path.join(backup,name+'.zip'));
 const temp=fs.mkdtempSync(path.join(root,'_backup','package-'));
 const output=path.join(temp,name+'.zip');
-execFileSync('zip',['-qr',output,name,'-x','*/node_modules/*','*/.DS_Store','*/AI-SYNC/evidence-*/*'],{cwd:root});
+execFileSync('zip',['-qr',output,name,'-x','*/node_modules/*','*/.DS_Store','*/AI-SYNC/evidence-*/*','*/database.rules.json'],{cwd:root});
 execFileSync('unzip',['-tq',output]);
+const entries=execFileSync('unzip',['-Z1',output],{encoding:'utf8'}).split('\n');
+if(entries.some(e=>/(^|\/)database\.rules\.json$/.test(e)))throw new Error('Rules file found in ZIP');
 for(const rel of files){
  const bytes=execFileSync('unzip',['-p',output,name+'/'+rel],{maxBuffer:16*1024*1024});
  if(!bytes.equals(fs.readFileSync(path.join(root,rel))))throw new Error('Archive mismatch: '+rel);

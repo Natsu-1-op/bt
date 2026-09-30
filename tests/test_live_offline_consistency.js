@@ -160,6 +160,8 @@ console.log('\n=== 五、方案 C 标定状态：字段不全必须退回，不�
   // threshold 缺失 + 没传 fixedDrop → drop = undefined → thDown = NaN，同样是静默 0 次
   const nNoThreshold = runOfflineWithCal(rows, null, { end_timeline_ms: 10000, run_baseline: 2048, refractory_until_ms: 10300 });
   chk(nNoThreshold > 0, 'threshold 缺失且未传固定阈值时退回常规标定', `${nNoThreshold} 次`);
+  const regular=runOfflineWithCal(rows,null,null);
+  chk(nNoThreshold===regular,'无阈值时必须从记录开头走常规标定，不能先吞掉旧标定窗口',`${nNoThreshold} vs ${regular}`);
 }
 
 console.log(bad ? `\n❌ ${bad} 项不通过` : '\n✅ 全部通过');

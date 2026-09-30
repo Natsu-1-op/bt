@@ -886,7 +886,7 @@
   }
 
   function showLogin(message) {
-    stopReplay();
+    if(S.replay)S.replay.playing=false; // Reauthentication must not destroy an unsaved trial.
     S.consoleAuthenticated = false;
     lockDebugPanel('');
     ui.loginGate.classList.remove('hidden');
@@ -911,7 +911,7 @@
     }
     const pass = ui.loginPass.value.trim();
     if (!pass) { ui.loginError.textContent = '请输入密码。'; return; }
-    if (pass.length > 128 || /[.#$/[]]/.test(pass)) { ui.loginError.textContent = '密码格式不合法。'; return; }
+    if (pass.length > 128 || /[.#$\/\[\]\u0000-\u001f\u007f]/.test(pass)) { ui.loginError.textContent = '密码格式不合法。'; return; }
     ui.loginBtn.disabled = true; ui.loginError.textContent = '正在校验…';
     try {
       if (await verifyConsolePassword(pass)) {
@@ -931,6 +931,7 @@
   }
 
   function consoleLogout() {
+    stopReplay();
     try { sessionStorage.removeItem(CONSOLE_SESSION_KEY); } catch (_) {}
     showLogin('已退出。');
   }
@@ -2150,7 +2151,8 @@
       if (!ready && blinkCalibration
           && Number.isFinite(blinkCalibration.end_timeline_ms)
           && Number.isFinite(blinkCalibration.run_baseline)
-          && Number.isFinite(blinkCalibration.refractory_until_ms)) {
+          && Number.isFinite(blinkCalibration.refractory_until_ms)
+          && (Number.isFinite(fixedDrop) || Number.isFinite(blinkCalibration.threshold))) {
         if (t <= blinkCalibration.end_timeline_ms) return null;
         const drop = Number.isFinite(fixedDrop) ? fixedDrop : blinkCalibration.threshold;
         if (Number.isFinite(drop)) {
@@ -2484,6 +2486,24 @@
   }
 
   // Import is atomic and always allocates fresh local identifiers: never overwrite.
+  function validateReanalysis(re, metadata) {
+    if(!re || !re.config || !Array.isArray(re.events) || re.events.length>CFG.maxEvents*4 ||
+       !Number.isFinite(re.drop_counts) || re.drop_counts<0 || re.drop_counts>4095 ||
+       !Number.isFinite(re.config.refractoryMs) || re.config.refractoryMs<0 || re.config.refractoryMs>10000 ||
+       re.config.manualDropCounts!==re.drop_counts || re.config.minDropCounts!==0 || re.config.manualThresholdEnabled!==true)
+      throw new Error('试调参数缺失、越界或与实际阈值不一致。');
+    for(const [key,value] of Object.entries(metadata.config)) {
+      if(!['manualDropCounts','minDropCounts','manualThresholdEnabled','refractoryMs'].includes(key) && re.config[key]!==value)
+        throw new Error('试调配置与原始处理参数不一致：'+key);
+    }
+    let last=-Infinity;
+    for(const ev of re.events){
+      if(!ev || !Number.isFinite(ev.t) || ev.t<metadata.first_timeline_ms || ev.t>metadata.last_timeline_ms || ev.t<last ||
+         !Number.isFinite(ev.utcMs) || Math.abs(ev.utcMs)>8e15 || !Number.isFinite(ev.width) || ev.width<0 || !Number.isFinite(ev.amp) || ev.amp<0)
+        throw new Error('试调事件无效、越界或时间顺序错误。');
+      last=ev.t;
+    }
+  }
   function validateImport(data) {
     // 对比文件（blink-analysis/v1）= 一份完整原始记录 + 一次试调的结果。
     // 之前这里只认 blink-export-all/v1 和 blink-export/v1，于是自己导出的对比文件
@@ -2528,6 +2548,7 @@
       }
       if (!count || !Number.isFinite(m.quality?.received) || count !== m.quality.received) throw new Error('样本数量不完整，未导入任何记录。');
       if (!Number.isFinite(m.first_timeline_ms) || !Number.isFinite(m.last_timeline_ms) || m.last_timeline_ms < m.first_timeline_ms) throw new Error('记录时间范围无效。');
+      if(m.reanalysis!==undefined)validateReanalysis(m.reanalysis,m);
       const ids = new Set();
       for (const ev of b.events) {
         if (!ev || ev.sessionId !== m.id || !Number.isInteger(ev.id) || ids.has(ev.id) || typeof ev.type !== 'string' ||
@@ -2615,7 +2636,11 @@
     const detector=makeOfflineDetector(config,drop,r.original.blink_calibration);
     const events=[];
     for(let i=0;i<r.rows.length;i++){
-      if(i%2000===0){await new Promise(resolve=>setTimeout(resolve,0));if(S.replay!==r || r.trialRevision!==revision)return;}
+      if(i%2000===0){
+        await new Promise(resolve=>setTimeout(resolve,0));
+        if(S.replay!==r || r.trialRevision!==revision)return;
+        if(!S.consoleAuthenticated || !consoleSessionValid()){status.textContent='登录已过期，试调计算已取消，请重新登录。';return;}
+      }
       const ev=detector(r.rows[i]);if(ev)events.push(ev);
     }
     r.trial={config,drop_counts:drop,events,computed_utc_ms:Date.now(),algorithm:'replay-fixed-threshold/v1',calibration_policy:'reuse-original-calibration-boundary-and-baseline'};
@@ -2625,7 +2650,9 @@
   async function exportReplayComparison() {
     const r=S.replay;if(!r || !r.trial || !isConsolePage || !S.consoleAuthenticated || !consoleSessionValid())throw new Error('请先完成一次有效的重放试调。');
     const trial=JSON.parse(JSON.stringify(r.trial));
-    const original=await buildBundle(JSON.parse(JSON.stringify(r.original)));
+    const source=JSON.parse(JSON.stringify(r.original));
+    delete source.reanalysis; // Keep exactly one current trial, not a growing chain of stale trials.
+    const original=await buildBundle(source);
     saveBlob(`blink-comparison-${r.original.id}.json`,'application/json;charset=utf-8',[JSON.stringify({schema:'blink-analysis/v1',original,reanalysis:trial})]);
   }
   async function startReplay() {
@@ -2654,10 +2681,10 @@
         // 这条记录是从对比文件导入的？把当时那次试调恢复出来，否则「导出对比」等于有去无回。
         // 注意 S.session 是库里那条**扁平**记录（metadata 的字段被平铺了），不是 {metadata:{...}}。
         const re = original.reanalysis || (original.metadata && original.metadata.reanalysis);
-        if (re && Array.isArray(re.events) && Number.isFinite(re.drop_counts)) {
-          const trialConf = { ...original.config, manualThresholdEnabled: true, manualDropCounts: re.drop_counts,
-                              minDropCounts: 0,
-                              refractoryMs: Number.isFinite(re.config && re.config.refractoryMs) ? re.config.refractoryMs : original.config.refractoryMs };
+        if (re !== undefined && re !== null) {
+          try {
+          validateReanalysis(re,original);
+          const trialConf = { ...re.config };
           S.replay.trial = {
             config: trialConf, drop_counts: re.drop_counts,
             events: re.events.map(ev => ({ t: ev.t, utcMs: ev.utcMs, width: ev.width, amp: ev.amp })),
@@ -2669,6 +2696,13 @@
           document.getElementById('trialStatus').textContent =
             `已从对比文件恢复试调：阈值 ${re.drop_counts} / ${S.replay.trial.events.length} 次；原始 ${events.length} 次。`
             + '改参数会按新值重算，原始数据不受影响。';
+          } catch (err) {
+            // Old database records may predate current import validation.
+            // A damaged optional trial must not block the original waveform.
+            S.replay.trial = null;
+            document.getElementById('trialStatus').textContent =
+              '这条记录的旧试调结果无法恢复，已使用原始波形和事件继续重放。可以重新试调并导出；原始数据未改变。';
+          }
         }
         document.getElementById('replaySeek').max=String(S.replay.end-S.replay.start);
         seekReplay(S.replay.start);
@@ -2679,7 +2713,12 @@
   }
   function tickReplay() {
     const r=S.replay;if(!r || !r.playing)return;
-    if(!isConsolePage || !S.consoleAuthenticated || !consoleSessionValid()){stopReplay();return;}
+    if(!isConsolePage || !S.consoleAuthenticated || !consoleSessionValid()){
+      r.playing=false;
+      document.getElementById('btnReplay').textContent='继续重放';
+      document.getElementById('trialStatus').textContent='登录已过期，重放已暂停，试调结果暂留内存。点标题重新登录；原始数据不受影响。';
+      return;
+    }
     const now=performance.now();
     if(now-r.wall<50)return; // Limit replay/UI updates to 20 Hz on phones.
     seekReplay(r.position+(now-r.wall)*Number(document.getElementById('replaySpeed').value));
