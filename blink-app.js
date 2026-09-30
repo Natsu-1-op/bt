@@ -121,6 +121,7 @@
     shownBpm: null,           // 次/分；null = 网页显示的是 --
     writeFn: null,            // 写入闭包（有的模块只支持 writeWithoutResponse）
     bleWriteChain: Promise.resolve(),
+    bleGeneration: 0, notifyHandler: null, analysisGeneration: 0,
     // 统计命令只保留最新一条；不要让每 500ms 的重复刷新在图片传输后排成长队。
     statsLastLine: '', statsQueuedLine: '', statsWritePending: false,
     // 设备时间轴锚点：把单片机的采样时间戳映射到网页时间轴上。
@@ -641,7 +642,7 @@
     let total = 0;
     for (const seg of segments) {
       const start = Number(seg.start_timeline_ms);
-      const end = Number.isFinite(Number(seg.end_timeline_ms)) ? Number(seg.end_timeline_ms) : to;
+      const end = seg.end_timeline_ms != null && Number.isFinite(Number(seg.end_timeline_ms)) ? Number(seg.end_timeline_ms) : to;
       if (!Number.isFinite(start) || end <= start) continue;
       total += Math.max(0, Math.min(end, to) - Math.max(start, from));
     }
@@ -687,13 +688,14 @@
   function loadFirebase() {
     if (window.firebase && window.firebase.database) return Promise.resolve(true);
     if (firebaseLoader) return firebaseLoader;
-    firebaseLoader = new Promise(resolve => {
+    const attempt = new Promise(resolve => {
       let settled = false;
       const finish = ok => { if (!settled) { settled = true; resolve(ok); } };
       const addScript = (src, onDone) => {
+        if (settled) return;
         const el = document.createElement('script');
         el.src = src; el.async = true;
-        el.onload = onDone; el.onerror = () => finish(false);
+        el.onload = () => { if (!settled) onDone(); }; el.onerror = () => finish(false);
         document.head.appendChild(el);
       };
       addScript('https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js', () => {
@@ -701,7 +703,9 @@
       });
       setTimeout(() => finish(false), CLOUD_SYNC_TIMEOUT_MS);
     });
-    return firebaseLoader;
+    firebaseLoader = attempt;
+    attempt.then(ok => { if (!ok && firebaseLoader === attempt) firebaseLoader = null; });
+    return attempt;
   }
 
   function withTimeout(promise, ms) {
@@ -1542,9 +1546,13 @@
   // 所有下行命令都在这里顺序切片，避免 OLED 位图或统计帧互相插入。
   function queueBleBytes(bytes) {
     if (!S.connected || !S.writeFn) return Promise.resolve(false);
+    const generation = S.bleGeneration, writer = S.writeFn;
+    const current = () => S.connected && S.bleGeneration === generation && S.writeFn === writer;
     const work = S.bleWriteChain.then(async () => {
       for (let i = 0; i < bytes.length; i += BLE_WRITE_CHUNK_BYTES) {
-        await S.writeFn(bytes.slice(i, i + BLE_WRITE_CHUNK_BYTES));
+        if (!current()) return false;
+        await writer(bytes.slice(i, i + BLE_WRITE_CHUNK_BYTES));
+        if (!current()) return false;
         if (i + BLE_WRITE_CHUNK_BYTES < bytes.length && BLE_WRITE_CHUNK_GAP_MS > 0) {
           await new Promise(resolve => setTimeout(resolve, BLE_WRITE_CHUNK_GAP_MS));
         }
@@ -1571,17 +1579,19 @@
     if (S.statsWritePending) return;
 
     S.statsWritePending = true;
+    const generation = S.bleGeneration;
     (async () => {
       try {
-        while (S.connected && S.writeFn && S.statsQueuedLine) {
+        while (S.connected && S.writeFn && S.bleGeneration === generation && S.statsQueuedLine) {
           const next = S.statsQueuedLine;
           S.statsQueuedLine = '';
           if (next === S.statsLastLine) continue;
           const ok = await queueBleText(next);
-          if (!ok) return;
+          if (!ok || S.bleGeneration !== generation) return;
           S.statsLastLine = next;
         }
       } finally {
+        if (S.bleGeneration !== generation) return;
         S.statsWritePending = false;
         // 在最后一次写入期间如果又产生了新统计，立即补发最新值。
         if (S.connected && S.writeFn && S.statsQueuedLine &&
@@ -1710,6 +1720,7 @@
 
   function parseIntelHex(text) {
     const image = new Uint8Array(OTA_APP_END - OTA_APP_BASE);
+    const written = new Uint8Array(image.length);
     image.fill(0xff);
     let upper = 0;
     let minAddress = Infinity, maxAddress = -Infinity, eof = false;
@@ -1735,10 +1746,11 @@
         }
         for (let i = 0; i < length; i++) {
           const index = absolute - OTA_APP_BASE + i;
-          if (image[index] !== 0xff && image[index] !== record[4 + i]) {
+          if (written[index] && image[index] !== record[4 + i]) {
             throw new Error(`HEX 第 ${lineNo + 1} 行与已有数据冲突`);
           }
           image[index] = record[4 + i];
+          written[index] = 1;
         }
         minAddress = Math.min(minAddress, absolute);
         maxAddress = Math.max(maxAddress, absolute + length);
@@ -1762,6 +1774,15 @@
       throw new Error('HEX 不是从 0x08002000 开始的 OTA 应用文件，请在 Keil 中重新生成应用 HEX。');
     }
     const size = maxAddress - OTA_APP_BASE;
+    if (size < 8 || written.slice(0, 8).some(v => !v)) throw new Error('HEX 缺少完整启动向量表');
+    const vectors = new DataView(image.buffer);
+    const stack = vectors.getUint32(0, true), reset = vectors.getUint32(4, true);
+    const entry = (reset & ~1) >>> 0, entryOffset = entry - OTA_APP_BASE;
+    if (stack <= 0x20000000 || stack > 0x20005000 || stack % 8 || !(reset & 1) ||
+        entryOffset < 8 || entryOffset + 2 > size || !written[entryOffset] || !written[entryOffset + 1] ||
+        (image[entryOffset] === 0xff && image[entryOffset + 1] === 0xff)) {
+      throw new Error('HEX 启动栈或复位入口无效，入口必须位于实际镜像内');
+    }
     return { image: image.slice(0, size), size, crc32: crc32Bytes(image, size) };
   }
 
@@ -1942,6 +1963,8 @@
       return;
     }
     try {
+      detachNotifyListener();
+      ++S.bleGeneration;
       setConnText('选择蓝牙设备…');
       S.device = await navigator.bluetooth.requestDevice({
         // 不用 service filter：部分 BLE 设备不会在广播包里声明 GATT
@@ -1974,8 +1997,11 @@
 
       S.rx = ''; S.dev = { lastMcu: null, lastPage: null, lastSeq: null }; S.bleWriteChain = Promise.resolve();
       S.statsLastLine = ''; S.statsQueuedLine = '';
-      S.notifyChar.addEventListener('characteristicvaluechanged',
-        e => onChunk(new TextDecoder().decode(e.target.value)));
+      const generation = S.bleGeneration;
+      S.notifyHandler = e => {
+        if (generation === S.bleGeneration) onChunk(new TextDecoder().decode(e.target.value));
+      };
+      S.notifyChar.addEventListener('characteristicvaluechanged', S.notifyHandler);
       await S.notifyChar.startNotifications();
 
       S.connected = true;
@@ -1994,6 +2020,7 @@
     } catch (err) {
       console.error(err);
       if (S.device && S.device.gatt.connected) S.device.gatt.disconnect();
+      detachNotifyListener(); ++S.bleGeneration; S.statsWritePending = false;
       S.notifyChar = null; S.writeChar = null; S.writeFn = null;
       const detail = err.message || String(err);
       const notOurDevice = S.device && /getPrimaryService|服务|service/i.test(detail);
@@ -2026,7 +2053,15 @@
     return { notify, write: writes(write) ? write : null };
   }
 
+  function detachNotifyListener() {
+    if (S.notifyChar && S.notifyHandler) S.notifyChar.removeEventListener('characteristicvaluechanged', S.notifyHandler);
+    S.notifyHandler = null;
+  }
+
   function onDisconnected() {
+    detachNotifyListener();
+    ++S.bleGeneration;
+    S.statsWritePending = false;
     rejectOtaWaiter(new Error('蓝牙连接在 OTA 过程中断开'));
     S.connected = false;
     S.notifyChar = null; S.writeChar = null; S.writeFn = null; S.rx = ''; S.bleWriteChain = Promise.resolve();
@@ -2201,6 +2236,9 @@
   }
 
   async function analyze() {
+    const generation = ++S.analysisGeneration;
+    const session = S.session ? JSON.parse(JSON.stringify(S.session)) : null;
+    const current = () => generation === S.analysisGeneration && S.session && S.session.id === session?.id;
     const canvas = $('freq');
     const ctx = canvas.getContext('2d');
     const wrap = $('freqWrap');
@@ -2212,10 +2250,11 @@
     ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = '#050b13'; ctx.fillRect(0, 0, W, H);
 
-    if (!S.session || !Number.isFinite(S.session.first_timeline_ms)) { clearSummary(); return; }
+    if (!session || !Number.isFinite(session.first_timeline_ms)) { clearSummary(); return; }
 
     await waitForWrites();
-    const t0rec = S.session.first_timeline_ms, t1rec = S.session.last_timeline_ms;
+    if (!current()) return;
+    const t0rec = session.first_timeline_ms, t1rec = session.last_timeline_ms;
     const totalSec = (t1rec - t0rec) / 1000;
     let a = Number(ui.fT0.value) || 0;
     let b = Number(ui.fT1.value) || Math.round(totalSec);
@@ -2228,14 +2267,15 @@
     // 把这次会话实时判决时真正用过的阈值取出来传下去。
     // blink_calibration.threshold 在"深度法"和"退回噪声法"两条分支里都会写，
     // 所以它总是等于实时实际用的那个值。
-    const liveDrop = S.session.blink_calibration && Number.isFinite(S.session.blink_calibration.threshold)
-      ? S.session.blink_calibration.threshold
-      : (S.session.detector && Number.isFinite(S.session.detector.drop_counts) ? S.session.detector.drop_counts : null);
-    const detector = makeOfflineDetector(S.session.config, liveDrop, S.session.blink_calibration);
+    const liveDrop = session.blink_calibration && Number.isFinite(session.blink_calibration.threshold)
+      ? session.blink_calibration.threshold
+      : (session.detector && Number.isFinite(session.detector.drop_counts) ? session.detector.drop_counts : null);
+    const detector = makeOfflineDetector(session.config, liveDrop, session.blink_calibration);
     const allEvents = [];
-    await visitChunks(S.session.id, chunk => {
+    await visitChunks(session.id, chunk => {
       for (const row of chunk.rows) { const event = detector(row); if (event) allEvents.push(event); }
     });
+    if (!current()) return;
     const from = t0rec + a * 1000, to = t0rec + b * 1000;
     const ev = allEvents.filter(e => e.t >= from && e.t <= to);
     const span = to - from;
@@ -2243,12 +2283,12 @@
     // 滑窗
     const series = [];
     if (span <= winMs) {
-      const activeMs = activeDurationMs(S.session, from, to);
+      const activeMs = activeDurationMs(session, from, to);
       series.push({ t: from + span / 2, bpm: activeMs >= 1000 ? ev.length / (activeMs / 1000) * 60 : null, n: ev.length });
     } else {
       for (let w = from; w + winMs <= to + 1; w += stepMs) {
         const n = ev.filter(e => e.t >= w && e.t < w + winMs).length;
-        const activeMs = activeDurationMs(S.session, w, w + winMs);
+        const activeMs = activeDurationMs(session, w, w + winMs);
         series.push({ t: w + winMs / 2, bpm: activeMs >= 1000 ? n / (activeMs / 1000) * 60 : null, n });
       }
     }
@@ -2288,7 +2328,7 @@
       series.filter(s => Number.isFinite(s.bpm)).forEach(s => { ctx.beginPath(); ctx.arc(x(s.t), y(s.bpm), 2.2, 0, Math.PI * 2); ctx.fill(); });
     }
 
-    const activeMs = activeDurationMs(S.session, from, to);
+    const activeMs = activeDurationMs(session, from, to);
     const avg = activeMs >= 1000 ? ev.length / (activeMs / 1000) * 60 : null;
     ui.sAvg.textContent = avg === null ? '--' : `${avg.toFixed(1)} 次/分`;
     ui.sCount.textContent = `${ev.length} 次`;
@@ -2504,6 +2544,29 @@
       last=ev.t;
     }
   }
+  function validateRecordConfig(config) {
+    const ranges = {
+      adcMax:[1,65535], sampleRateHz:[1,100000], maLength:[1,4096], calibrationMs:[1,600000],
+      noiseMultiplier:[0,100], minDropCounts:[0,65535], releaseRatio:[0,1],
+      minWidthMs:[0,60000], maxWidthMs:[1,60000], refractoryMs:[0,10000], baselineAlpha:[0,1]
+    };
+    if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('记录参数无效。');
+    for (const [key,[min,max]] of Object.entries(ranges)) {
+      const v=config[key];
+      if (!Number.isFinite(v) || v<min || v>max || (['adcMax','maLength'].includes(key) && !Number.isInteger(v)))
+        throw new Error('记录参数缺失或越界：'+key);
+    }
+    if(config.maxWidthMs<config.minWidthMs)throw new Error('记录时宽参数顺序无效。');
+    if(typeof config.manualThresholdEnabled!=='boolean')throw new Error('记录手动阈值开关无效。');
+    if(config.manualThresholdEnabled && (!Number.isFinite(config.manualDropCounts) || config.manualDropCounts<0 || config.manualDropCounts>65535))throw new Error('记录手动阈值无效。');
+    // Older v1 exports predate these optional fields. Missing retains the detector's
+    // documented legacy default; a present but invalid value must not be coerced.
+    if(config.calibrationSkipMs!==undefined && (!Number.isFinite(config.calibrationSkipMs) || config.calibrationSkipMs<0 || config.calibrationSkipMs>=config.calibrationMs))throw new Error('记录准备时间无效。');
+    if(config.blinkCalEnabled!==undefined && typeof config.blinkCalEnabled!=='boolean')throw new Error('记录标定开关无效。');
+    if(config.blinkCalRatio!==undefined && (!Number.isFinite(config.blinkCalRatio) || config.blinkCalRatio<=0 || config.blinkCalRatio>1))throw new Error('记录标定比例无效。');
+    for(const v of Object.values(config))if(typeof v==='number'&&!Number.isFinite(v))throw new Error('记录参数无效。');
+  }
+
   function validateImport(data) {
     // 对比文件（blink-analysis/v1）= 一份完整原始记录 + 一次试调的结果。
     // 之前这里只认 blink-export-all/v1 和 blink-export/v1，于是自己导出的对比文件
@@ -2531,9 +2594,8 @@
           !Number.isFinite(m.created_utc_ms) || Math.abs(m.created_utc_ms) > 8e15 ||
           !Array.isArray(b.sample_columns) || b.sample_columns.join('|') !== columns.join('|') ||
           !Array.isArray(b.sample_chunks) || !Array.isArray(b.events)) throw new Error('文件结构或数据列不受支持。');
-      if (!Number.isFinite(m.config.sampleRateHz) || m.config.sampleRateHz <= 0 || m.config.sampleRateHz > 100000) throw new Error('采样率无效。');
-      for (const v of Object.values(m.config)) if (typeof v === 'number' && !Number.isFinite(v)) throw new Error('记录参数无效。');
-      let last = -Infinity, count = 0;
+      validateRecordConfig(m.config);
+      let last = -Infinity, first = null, count = 0;
       const indices = new Set();
       for (const c of b.sample_chunks) {
         if (!c || c.sessionId !== m.id || !Number.isInteger(c.index) || c.index < 0 || indices.has(c.index) || !Array.isArray(c.rows)) throw new Error('数据块编号或归属无效。');
@@ -2543,16 +2605,27 @@
         if (!Array.isArray(row) || row.length !== 7 || !row.every(Number.isFinite) || row[0] < last ||
             Math.abs(row[1]) > 8e15 || Math.abs(row[2]) > 8e15 || row[3] < 0 || row[3] > CFG.adcMax ||
             !Number.isInteger(row[5]) || !Number.isInteger(row[6])) throw new Error('采样点无效或时间顺序错误。');
+        if(first===null)first=row[0];
         last = row[0]; count++; total++;
         if (total > 500000) throw new Error('一次最多导入 50 万个采样点，请拆分文件。');
       }
       if (!count || !Number.isFinite(m.quality?.received) || count !== m.quality.received) throw new Error('样本数量不完整，未导入任何记录。');
       if (!Number.isFinite(m.first_timeline_ms) || !Number.isFinite(m.last_timeline_ms) || m.last_timeline_ms < m.first_timeline_ms) throw new Error('记录时间范围无效。');
+      if(m.first_timeline_ms!==first || m.last_timeline_ms!==last)throw new Error('记录时间范围与采样点不一致。');
+      if(m.segments!==undefined){
+        if(!Array.isArray(m.segments))throw new Error('采集分段无效。');
+        let end=-Infinity;const segmentIds=new Set();
+        for(const seg of m.segments){
+          if(!seg || !Number.isInteger(seg.id) || segmentIds.has(seg.id) || !Number.isFinite(seg.start_timeline_ms) || !Number.isFinite(seg.end_timeline_ms) ||
+             seg.start_timeline_ms<first || seg.end_timeline_ms>last || seg.start_timeline_ms<end || seg.end_timeline_ms<seg.start_timeline_ms)throw new Error('采集分段时间或编号无效。');
+          segmentIds.add(seg.id);end=seg.end_timeline_ms;
+        }
+      }
       if(m.reanalysis!==undefined)validateReanalysis(m.reanalysis,m);
       const ids = new Set();
       for (const ev of b.events) {
         if (!ev || ev.sessionId !== m.id || !Number.isInteger(ev.id) || ids.has(ev.id) || typeof ev.type !== 'string' ||
-            !Number.isFinite(ev.timeline_ms) || !Number.isFinite(ev.utc_ms)) throw new Error('事件数据无效。');
+            !Number.isFinite(ev.timeline_ms) || ev.timeline_ms<first || ev.timeline_ms>last || !Number.isFinite(ev.utc_ms)) throw new Error('事件数据无效。');
         ids.add(ev.id);
       }
     }
@@ -2842,7 +2915,7 @@
     scope.height = Math.round(r.height * dpr);
     sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
-  window.addEventListener('resize', () => { resizeScope(); analyze(); });
+  window.addEventListener('resize', () => { resizeScope(); analyze().catch(err => { console.error(err); ui.help.textContent = '分析未完成，请重试；原始数据未改变。'; }); });
 
   function draw() {
     requestAnimationFrame(draw);

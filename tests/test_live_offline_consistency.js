@@ -118,11 +118,12 @@ console.log('\n=== 三、方案 C 的场景：浅眨眼 + 低阈值 ===\n');
 
 console.log('\n=== 四、analyze() 确实把实时阈值传下去了 ===\n');
 {
-  const calls = src.match(/makeOfflineDetector\(S\.session\.config, liveDrop, S\.session\.blink_calibration\)/g) || [];
-  const liveDropDef = src.match(/const liveDrop = S\.session\.blink_calibration/);
+  const calls = src.match(/makeOfflineDetector\(session\.config, liveDrop, session\.blink_calibration\)/g) || [];
+  const liveDropDef = src.match(/const liveDrop = session\.blink_calibration/);
   chk(calls.length === 1, 'analyze() 传了 liveDrop', String(calls.length));
   chk(!!liveDropDef, 'liveDrop 取自会话里记录的 blink_calibration.threshold');
-  chk(/Number\.isFinite\(S\.session\.blink_calibration\.threshold\)/.test(src), '取阈值前做了有限性检查');
+  chk(/Number\.isFinite\(session\.blink_calibration\.threshold\)/.test(src), '取阈值前做了有限性检查');
+  chk(/const session = S\.session \? JSON\.parse\(JSON\.stringify\(S\.session\)\)/.test(src), '分析使用稳定会话快照');
 }
 
 console.log('\n=== 五、方案 C 标定状态：字段不全必须退回，不能静默判 0 ===\n');

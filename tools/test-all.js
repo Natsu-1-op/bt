@@ -12,7 +12,8 @@ for (const file of tests) {
     if(!tests.includes(aliases[file]))throw new Error('Missing test target for alias '+file);
     aliasCount++;console.log('ALIAS '+file+' -> '+aliases[file]+' (counted once)');continue;
   }
-  if(file==='test_firmware_queues.js' && ['main.c','main_sta_flying_lead.c'].some(f=>!fs.existsSync(path.join(root,'stm32/User',f)))) {
+  if((file==='test_firmware_queues.js' && ['main.c','main_sta_flying_lead.c'].some(f=>!fs.existsSync(path.join(root,'stm32/User',f)))) ||
+     (file==='test_ota_firmware.js' && ['ota_app.c','ota_image.h','bootloader.c'].some(f=>!fs.existsSync(path.join(root,'stm32/OTA',f))))) {
     skipped++; console.log('SKIP '+file+': local firmware sources not present (not tracked in the web repository)'); continue;
   }
   const r = spawnSync(process.execPath, [path.join(root,'tests',file)], {cwd:root,encoding:'utf8',timeout:90000});

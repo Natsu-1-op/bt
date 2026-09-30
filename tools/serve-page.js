@@ -26,6 +26,9 @@ const server = http.createServer((req, res) => {
   let rel;
   try { rel = decodeURIComponent((req.url || '/').split('?')[0]); } catch (_) { rel = '/'; }
   if (rel === '/' || rel === '') rel = '/index.html';
+  // Explicit public assets only: never serve Git, rules, backups or symlinks.
+  const publicFiles = new Set(['/index.html','/test.html','/admin.html','/blink-app.js']);
+  if (!publicFiles.has(rel)) { res.writeHead(403); res.end('403 forbidden'); return; }
 
   // 归一化后确认仍在 ROOT 之内，防止 ../ 穿越
   const file = path.resolve(ROOT, '.' + path.posix.normalize(rel));
@@ -35,6 +38,9 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  try {
+    if (fs.lstatSync(file).isSymbolicLink()) { res.writeHead(403); res.end('403 forbidden'); return; }
+  } catch (_) { res.writeHead(404); res.end('404 not found'); return; }
   fs.readFile(file, (err, buf) => {
     if (err) {
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -54,8 +60,7 @@ server.on('error', (e) => {
   process.exit(1);
 });
 
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, '127.0.0.1', () => {
   console.log(`本机打开:   http://localhost:${PORT}/`);
-  console.log(`手机同网段: http://<本机内网IP>:${PORT}/   （手机只能看/用演示模式，局域网 http 下没有蓝牙）`);
   console.log('看波形: 点页面底部「演示模式（无设备）」，再切换右上角「纵轴自动量程」复选框对比。');
 });
