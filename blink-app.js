@@ -111,7 +111,7 @@
   // 状态
   // ------------------------------------------------------------------
   const S = {
-    connected: false, hasWrite: false, busy: false,
+    connected: false, connecting: false, hasWrite: false, busy: false,
     viewingHistory: false, timeoutHandling: false, disconnectPending: false,
     phase: 'IDLE',            // IDLE | CAL | RUN | PAUSE | STOPPED
     device: null, notifyChar: null, writeChar: null,
@@ -122,6 +122,7 @@
     writeFn: null,            // 写入闭包（有的模块只支持 writeWithoutResponse）
     bleWriteChain: Promise.resolve(),
     bleGeneration: 0, notifyHandler: null, analysisGeneration: 0,
+    continuityResumePending: false,
     // 统计命令只保留最新一条；不要让每 500ms 的重复刷新在图片传输后排成长队。
     statsLastLine: '', statsQueuedLine: '', statsWritePending: false,
     // 设备时间轴锚点：把单片机的采样时间戳映射到网页时间轴上。
@@ -131,7 +132,7 @@
 
     ma: [], maSum: 0,
     cal: [], calStartMs: 0,
-    baseline: 0, mad: 0, noise: 1, dropCounts: 0, thDown: 0, thUp: 0,
+    baseline: 0, mad: 0, noise: 1, dropCounts: 0, thDown: 0, thUp: 0, adaptiveThreshold: null,
     // 波形纵轴量程。center=null 表示还没定过，下一帧直接取当前窗口的值。
     range: { center: null, half: CFG.adcMax / 2 },
     // 现场眨眼标定的中间状态
@@ -203,6 +204,7 @@
   function persistSession() {
     if (!S.session) return Promise.resolve();
     const snapshot = JSON.parse(JSON.stringify(S.session));
+    if (snapshot.status === 'recording') snapshot.quality = { ...S.quality };
     return enqueueWrite(db => new Promise((resolve, reject) => {
       const tx = db.transaction('sessions', 'readwrite');
       tx.objectStore('sessions').put(snapshot);
@@ -247,8 +249,8 @@
       request.onsuccess = () => {
         const cursor = request.result;
         if (!cursor) return;
-        visit(cursor.value);
-        cursor.continue();
+        try { visit(cursor.value); cursor.continue(); }
+        catch (err) { reject(err); tx.abort(); }
       };
       tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
     }));
@@ -315,6 +317,44 @@
     return Math.max(1, 1.4826 * median(hp.map(v => Math.abs(v))));
   }
 
+  // Versioned policy shared by acquisition and reanalysis. A noisy start is
+  // only a seed, not a permanent floor. Keep the operator's noise multiplier
+  // and minimum, and don't immediately lower the threshold on one quiet block.
+  function makeAdaptiveThreshold(config, initialDrop) {
+    const count = Math.min(800, Math.max(8, Math.round(2 * config.sampleRateHz)));
+    const samples = [], history = [];
+    let clipped = false;
+    return {
+      drop: initialDrop,
+      blockedUntil: -Infinity,
+      push(t, filt, raw) {
+        if (raw <= 2 || raw >= config.adcMax - 2) {
+          clipped = true;
+          this.blockedUntil = t + Math.max(300, config.refractoryMs);
+        }
+        samples.push(filt);
+        if (samples.length < count) return;
+        if (!clipped) {
+          const latest = robustNoise(samples);
+          history.push(latest);
+          if (history.length > 5) history.shift();
+          const local = Math.max(config.minDropCounts, config.noiseMultiplier * Math.max(latest, median(history)));
+          if (history.length >= 3) {
+            // Plan C supplies the starting depth; even a deep calibration
+            // blink cannot pin the running threshold far above local noise.
+            const target = Math.max(local, Math.min(initialDrop, 1.25 * local));
+            this.drop = Math.max(target, this.drop * 0.75);
+          } else {
+            this.drop = Math.max(this.drop, local);
+          }
+        } else {
+          history.length = 0;
+        }
+        clipped = false; samples.length = 0;
+      }
+    };
+  }
+
   // 标定窗口内的基线漂移量：末四分之一的中位数 − 首四分之一的中位数。
   // 中位数而不是均值 —— 窗口里混进一次眨眼也不至于把结论带偏。
   function calibrationDrift(samples) {
@@ -338,6 +378,7 @@
   }
 
   function refreshButtons() {
+    ui.btnConn.disabled = S.connecting;
     const replayName=document.getElementById('replayRecordName');
     if(replayName)replayName.textContent=S.session ? `当前记录：${S.session.participant_id || '未命名'} · ${iso(S.session.created_utc_ms).replace('T',' ').slice(0,19)} UTC` : '请先打开一条记录';
     const c = S.connected;
@@ -367,12 +408,13 @@
     if (S.busy) [ui.btnConn, ui.btnStart, ui.btnStop, ui.btnClear, ui.btnExportBundle, ui.btnPause, ui.btnAnalyze, ui.btnFull, ui.btnLoad, ui.btnOledSend, ui.btnOta].forEach(b => { b.disabled = true; });
     for(const id of ['btnImport','btnReplay']) {
       const b=document.getElementById(id);
-      if(b)b.disabled=S.busy || S.startPending || running || paused || cal || (id==='btnReplay' && !hasSession);
+      if(b)b.disabled=S.busy || S.startPending || running || paused || cal ||
+        (id==='btnReplay' && !hasSession) || (id==='btnImport' && !!S.importReading);
     }
     for(const id of ['btnReplayStop','replaySeek']) {
       const b=document.getElementById(id);if(b)b.disabled=S.busy || !S.replay;
     }
-    for(const id of ['trialDrop','trialRefractory','trialReset','trialExport']) {
+    for(const id of ['trialDrop','trialRefractory','trialAdaptive','trialReset','trialExport']) {
       const b=document.getElementById(id);if(b)b.disabled=S.busy || !S.replay;
     }
   }
@@ -387,7 +429,7 @@
     return S.maSum / S.ma.length;
   }
 
-  function resetFilter() { S.ma = []; S.maSum = 0; }
+  function resetFilter() { S.ma = []; S.maSum = 0; S.adaptiveThreshold = null; }
 
   // 标定阶段至少应该收到多少个样本。
   // ⚠️ 必须和 onSample 里真正的取样条件一致：开头 calibrationSkipMs 不计入，
@@ -420,11 +462,14 @@
   function thresholdDeciderText() {
     const active = ['CAL', 'BLINKCAL', 'RUN', 'PAUSE'].includes(S.phase);
     const config = active && S.session ? S.session.config : currentConfig();
+    if (active && S.phase !== 'CAL' && S.phase !== 'BLINKCAL' && config.thresholdPolicy === 'adaptive-noise-v1' && !config.manualThresholdEnabled) {
+      return `自动阈值：当前 ${S.dropCounts.toFixed(1)} ADC 计数；随近期噪声调整，仍受设置下限及抗干扰等级约束。`;
+    }
     if (config.blinkCalEnabled) {
       if (S.phase === 'BLINKCAL') return `正在现场眨眼标定；临时下降幅度阈值 ${S.dropCounts.toFixed(2)} ADC 计数，完成后按参考深度与噪声确定正式阈值。`;
       if (active && S.session && S.session.blink_calibration) return S.session.blink_calibration.note;
       return `现场眨眼标定：阈值 = max（参考深度的 ${Math.round(config.blinkCalRatio * 100)}%，${config.noiseMultiplier}σ）。`
-        + `参考深度取第20百分位；记录不足时退回 max（下限 ${config.minDropCounts}，σ × ${config.noiseMultiplier}）。此模式不使用手动阈值。`;
+        + `参考深度用于起始阈值；记录不足时按准备阶段噪声起步。未启用手动阈值时，正式计数随近期噪声调整。`;
     }
     const minDrop = boundedInputNumber(ui.fMinDrop, CFG.minDropCounts, 0, 200);
     if (ui.manualThresholdEnabled.checked) {
@@ -437,7 +482,7 @@
     }
     const mult = boundedInputNumber(ui.fMult, CFG.noiseMultiplier, 0, 12);
     return `自动模式：阈值 = max(下限 ${minDrop}, σ × 抗干扰等级 ${mult})。`
-      + '下限与自动项哪个大由哪个决定 —— 看导出记录里的 detector.drop_counts。';
+      + '起始值由准备阶段确定，正式计数按近期噪声更新。';
   }
 
   function markConsoleConfigDirty() {
@@ -450,6 +495,7 @@
 
   function currentConfig() {
     return {
+      thresholdPolicy: 'adaptive-noise-v1',
       adcMax: CFG.adcMax, sampleRateHz: CFG.sampleRateHz, maLength: CFG.maLength,
       calibrationMs: CFG.calibrationMs, calibrationSkipMs: CFG.calibrationSkipMs, noiseMultiplier: boundedInputNumber(ui.fMult, CFG.noiseMultiplier, 0, 12),
       minDropCounts: boundedInputNumber(ui.fMinDrop, CFG.minDropCounts, 0, 200), releaseRatio: CFG.releaseRatio,
@@ -1033,6 +1079,7 @@
       S.phase = 'CAL'; S.cal = []; S.calStartMs = null;
       setBlinkCount(0); S.shownBpm = 0; ui.mBpm.textContent = '0 次';
       S.events = []; S.inBlink = false; S.refractoryUntil = 0;
+      S.continuityResumePending = false;
       S.rec = { t: [], raw: [], filt: [], ev: [] }; S.recStartMs = 0; S.recEndMs = 0;
       S.currentChunk = null; S.chunkIndex = 0; S.nextEventId = 1; S.activeSegment = null;
       S.viewingHistory = false; S.recordingStartedAt = performance.now(); S.timeoutHandling = false; S.disconnectPending = false;
@@ -1172,7 +1219,9 @@
         S.session.status = 'calibration_invalid';
         S.session.ended_utc_ms = Date.now(); S.session.ended_utc_iso = iso(S.session.ended_utc_ms);
         S.session.quality = { ...S.quality };
+        endSegment(S.lastT, sampleUtc(S.lastT, Date.now()));
         addEvent('calibration_invalid', S.lastT, sampleUtc(S.lastT, Date.now()), { baseline: base, min: calMin, max: calMax });
+        flushChunk().catch(console.error);
         persistSession().catch(console.error);
       }
       lockSessionInputs(false); setState('信号异常', 'badc'); refreshButtons();
@@ -1224,9 +1273,22 @@
     }
   }
 
-  function detect(t, filt) {
+  function detect(t, filt, raw) {
     const config = S.session ? S.session.config : currentConfig();
     const refr = config.refractoryMs;
+    const adaptive = S.phase === 'RUN' && config.thresholdPolicy === 'adaptive-noise-v1' && !config.manualThresholdEnabled;
+    if (adaptive) {
+      const tracker = S.adaptiveThreshold ??= makeAdaptiveThreshold(config,
+        S.session?.blink_calibration?.threshold ?? S.session?.detector?.drop_counts ?? S.dropCounts);
+      tracker.push(t, filt, raw);
+      if (t < tracker.blockedUntil) { S.inBlink = false; return; }
+      if (!S.inBlink && S.dropCounts !== tracker.drop) {
+        S.dropCounts = tracker.drop;
+        S.thDown = S.baseline - tracker.drop;
+        S.thUp = S.baseline - tracker.drop * config.releaseRatio;
+        if (!ui.debugPanel.classList.contains('hidden')) updateDebugControls();
+      }
+    }
 
     if (!S.inBlink) {
       if (filt < S.thDown && t >= S.refractoryUntil) {
@@ -1265,7 +1327,9 @@
             S.events.push(ev);
             if (S.events.length > CFG.maxEvents) S.events.shift();
             S.rec.ev.push(ev);
-            addEvent('blink', ev.t, ev.utcMs, { amplitude_counts: ev.amp, width_ms: width, algorithm: 'web-live-v1' });
+            addEvent('blink', ev.t, ev.utcMs, { amplitude_counts: ev.amp, width_ms: width,
+              algorithm: adaptive ? 'web-adaptive-v1' : 'web-live-v1',
+              ...(adaptive ? { threshold_counts: S.dropCounts } : {}) });
             ui.mLast.textContent = `${width.toFixed(0)} ms / ${ev.amp}`;
             updateLiveStats(t);
             pushStats();             // 事件写入后再同步，避免设备端落后一次眨眼
@@ -1375,6 +1439,12 @@
 
     const receivedUtcMs = Date.now();
     const recording = S.session && (S.phase === 'RUN' || S.phase === 'CAL' || S.phase === 'BLINKCAL');
+    if (recording && S.continuityResumePending) {
+      // Anchor the quarantine to the first sample of the new segment, exactly
+      // as offline replay does; the previous timestamp may be seconds old.
+      S.refractoryUntil = t + S.session.config.refractoryMs;
+      S.continuityResumePending = false;
+    }
     const utcMs = recording ? sampleUtc(t, receivedUtcMs) : receivedUtcMs;
     const flags = recording ? updateQuality(raw) | (S.phase === 'BLINKCAL' ? 8 : 0) : 0;
     if (recording) appendRecordedSample(t, utcMs, receivedUtcMs, raw, filt, flags);
@@ -1390,7 +1460,7 @@
       if (t - S.calStartMs >= CFG.calibrationSkipMs) S.cal.push(filt);
       if (t - S.calStartMs >= CFG.calibrationMs) finishCalibration();
     } else if (S.phase === 'RUN') {
-      detect(t, filt);
+      detect(t, filt, raw);
     } else if (S.phase === 'BLINKCAL') {
       detect(t, filt);
       // detect 里可能已经因为收够次数而切到 RUN 了，所以再看一眼当前阶段
@@ -1406,11 +1476,7 @@
     S.rx += text;
     if (S.rx.length > 32768) {
       S.rx = '';
-      if (S.session && (S.phase === 'CAL' || S.phase === 'RUN')) {
-        S.quality.discontinuities = (S.quality.discontinuities || 0) + 1;
-        addEvent('rx_buffer_overflow', S.lastT, sampleUtc(S.lastT, Date.now()), { note: '接收缓存超过限制，部分帧被丢弃。' });
-        resetFilter(); S.inBlink = false;
-      }
+      breakSampleContinuity('rx_buffer_overflow', { note: '接收缓存超过限制，部分帧被丢弃。' });
     }
     const parts = S.rx.split('\n');
     S.rx = parts.pop();
@@ -1444,6 +1510,7 @@
       ui.help.textContent = '检测到数据中断，本次记录已标记，请结束后重新测试。';
     }
     resetFilter(); S.inBlink = false;
+    S.continuityResumePending = true;
     S.refractoryUntil = S.lastT + CFG.refractoryMs;
     if (S.phase === 'CAL') { S.cal = []; S.calStartMs = null; }
   }
@@ -1958,13 +2025,16 @@
   // BLE
   // ------------------------------------------------------------------
   async function connect() {
+    if (S.connecting || S.connected) return;
     if (!navigator.bluetooth) {
       alert('当前浏览器无法连接采集设备。');
       return;
     }
+    S.connecting = true; refreshButtons();
     try {
       detachNotifyListener();
-      ++S.bleGeneration;
+      if (S.device) S.device.removeEventListener('gattserverdisconnected', onDisconnected);
+      const generation = ++S.bleGeneration;
       setConnText('选择蓝牙设备…');
       S.device = await navigator.bluetooth.requestDevice({
         // 不用 service filter：部分 BLE 设备不会在广播包里声明 GATT
@@ -1985,24 +2055,25 @@
       const chars = await service.getCharacteristics();
       const selected = selectBleChannels(service.uuid, chars);
       S.notifyChar = selected.notify; S.writeChar = selected.write;
+      const writeChar = selected.write;
       // 两种写入方式要分开选：只支持 writeWithoutResponse 的模块上，
       // 直接调 writeValue() 会抛 NotSupportedError。
-      S.writeFn = !S.writeChar ? null
-                : (S.writeChar.properties.write
-                    ? (b) => S.writeChar.writeValueWithResponse
-                      ? S.writeChar.writeValueWithResponse(b)
-                      : S.writeChar.writeValue(b)
-                    : (b) => S.writeChar.writeValueWithoutResponse(b));
+      S.writeFn = !writeChar ? null
+                : (writeChar.properties.write
+                    ? (b) => writeChar.writeValueWithResponse
+                      ? writeChar.writeValueWithResponse(b)
+                      : writeChar.writeValue(b)
+                    : (b) => writeChar.writeValueWithoutResponse(b));
       if (!S.notifyChar) throw new Error('这个服务下没有可通知的特征');
 
       S.rx = ''; S.dev = { lastMcu: null, lastPage: null, lastSeq: null }; S.bleWriteChain = Promise.resolve();
       S.statsLastLine = ''; S.statsQueuedLine = '';
-      const generation = S.bleGeneration;
       S.notifyHandler = e => {
         if (generation === S.bleGeneration) onChunk(new TextDecoder().decode(e.target.value));
       };
       S.notifyChar.addEventListener('characteristicvaluechanged', S.notifyHandler);
       await S.notifyChar.startNotifications();
+      if (generation !== S.bleGeneration || !S.device.gatt.connected) throw new Error('设备在连接过程中断开，请重新连接。');
 
       S.connected = true;
      ui.btnConn.textContent = '断开设备';
@@ -2019,6 +2090,7 @@
      autoPushDisplay().catch(console.error);
     } catch (err) {
       console.error(err);
+      if (S.device) S.device.removeEventListener('gattserverdisconnected', onDisconnected);
       if (S.device && S.device.gatt.connected) S.device.gatt.disconnect();
       detachNotifyListener(); ++S.bleGeneration; S.statsWritePending = false;
       S.notifyChar = null; S.writeChar = null; S.writeFn = null;
@@ -2029,6 +2101,8 @@
         : `连接失败：${detail}`);
       S.connected = false;
       refreshButtons();
+    } finally {
+      S.connecting = false; refreshButtons();
     }
   }
 
@@ -2058,7 +2132,10 @@
     S.notifyHandler = null;
   }
 
-  function onDisconnected() {
+  function onDisconnected(event) {
+    // Ignore a queued disconnect from an older device after reconnecting.
+    if (event && event.target && event.target !== S.device) return;
+    if (S.device) S.device.removeEventListener('gattserverdisconnected', onDisconnected);
     detachNotifyListener();
     ++S.bleGeneration;
     S.statsWritePending = false;
@@ -2095,6 +2172,7 @@
       S.phase = 'PAUSE'; setState('已暂停', 'warnc');
     } else if (S.phase === 'PAUSE') {
       resetFilter(); S.inBlink = false;
+      S.continuityResumePending = true;
       S.recordingStartedAt = performance.now(); S.lastSampleAt = 0;
       S.refractoryUntil = S.lastT + (S.session ? S.session.config.refractoryMs : CFG.refractoryMs);
       addEvent('resume', S.lastT, sampleUtc(S.lastT, Date.now()));
@@ -2163,14 +2241,17 @@
   // fixedDrop：这次会话实时判决时真正用过的阈值。传了就【直接用它】，不再自己重算 ——
   // 方案 C（现场眨眼标定）定出来的阈值是量出来的，离线这条路上没有眨眼标定那一段数据，
   // 重算必然对不上，同一份记录「实时」和「回看」就会给出不同的眨眼数。
-  function makeOfflineDetector(config, fixedDrop, blinkCalibration = null) {
+  function makeOfflineDetector(config, fixedDrop, blinkCalibration = null,
+    adaptive = config.thresholdPolicy === 'adaptive-noise-v1' && !config.manualThresholdEnabled) {
     let ma = [], maSum = 0, cal = [], calStart = null, baseline = 0, thDown = 0, thUp = 0;
     let ready = false, inBlink = false, falling = 0, fallingUtc = 0, minimum = 0, refractoryUntil = 0, previousSegment = null;
+    let tracker = null, initialDrop = null, eventDrop = null;
     const push = v => { ma.push(v); maSum += v; if (ma.length > config.maLength) maSum -= ma.shift(); return maSum / ma.length; };
     return row => {
-      const [t, utcMs,, raw,, segment] = row;
+      const [t, utcMs,, raw,, segment, flags] = row;
       if (previousSegment !== null && segment !== previousSegment) {
         ma = []; maSum = 0; inBlink = false; refractoryUntil = t + config.refractoryMs;
+        tracker = null;
         if (!ready) { cal = []; calStart = null; }
       }
       previousSegment = segment;
@@ -2192,6 +2273,7 @@
         const drop = Number.isFinite(fixedDrop) ? fixedDrop : blinkCalibration.threshold;
         if (Number.isFinite(drop)) {
           baseline = blinkCalibration.run_baseline;
+          initialDrop = drop;
           thDown = baseline - drop; thUp = baseline - drop * config.releaseRatio;
           refractoryUntil = blinkCalibration.refractory_until_ms;
           ready = true;
@@ -2215,8 +2297,19 @@
           : (config.manualThresholdEnabled
               ? Math.max(config.minDropCounts, config.manualDropCounts)
               : Math.max(config.minDropCounts, sigma * config.noiseMultiplier));
-        baseline = base; thDown = base - drop; thUp = base - drop * config.releaseRatio; ready = true;
+        baseline = base; initialDrop = drop; thDown = base - drop; thUp = base - drop * config.releaseRatio; ready = true;
         return null;
+      }
+      if (adaptive) {
+        if (flags & 8) return null; // A recording stopped during Plan C has no formal blinks in that interval.
+        tracker ??= makeAdaptiveThreshold(config, initialDrop);
+        tracker.push(t, filt, raw);
+        if (t < tracker.blockedUntil) { inBlink = false; return null; }
+        if (!inBlink) {
+          eventDrop = tracker.drop;
+          thDown = baseline - eventDrop;
+          thUp = baseline - eventDrop * config.releaseRatio;
+        }
       }
       if (!inBlink) {
         if (filt < thDown && t >= refractoryUntil) { inBlink = true; falling = t; fallingUtc = utcMs; minimum = filt; }
@@ -2229,7 +2322,8 @@
       const width = t - falling;
       if (filt > thUp || width > config.maxWidthMs) {
         inBlink = false; refractoryUntil = t + config.refractoryMs;
-        if (width >= config.minWidthMs && width <= config.maxWidthMs) return { t: falling, utcMs: fallingUtc, width, amp: Math.round(baseline - minimum) };
+        if (width >= config.minWidthMs && width <= config.maxWidthMs) return { t: falling, utcMs: fallingUtc, width,
+          amp: Math.round(baseline - minimum), ...(adaptive ? { threshold_counts: eventDrop } : {}) };
       }
       return null;
     };
@@ -2348,6 +2442,7 @@
   // 返回 null = 可以导出；否则返回不能导出的原因。
   function exportRejectReason(snapshot) {
     if (!snapshot || !snapshot.id) return '记录无效。';
+    if (snapshot.status === 'interrupted_snapshot' && snapshot.snapshot_export?.original_status === 'recording') return null;
     if (snapshot.storage_error) return '这条记录保存时出过错，数据可能不完整。';
     if (snapshot.status === 'recording') return '这条记录还在进行中，请先结束测试。';
     const q = snapshot.quality || {};
@@ -2364,8 +2459,9 @@
     return null;
   }
 
-  async function buildBundle(sessionSnapshot) {
+  async function buildBundle(sessionSnapshot, allowSavedSnapshot = false) {
     const sessionId = sessionSnapshot.id;
+    if (allowSavedSnapshot && sessionSnapshot.status === 'recording') return buildSavedRecordingSnapshot(sessionId);
     const reason = exportRejectReason(sessionSnapshot);
     if (reason) throw new Error(reason);
     const q = sessionSnapshot.quality || {};
@@ -2376,18 +2472,65 @@
     if (Number.isFinite(expectedCount) && storedCount !== expectedCount) {
       throw new Error('保存的样本数不完整（库里 ' + storedCount + ' 个，记录里 ' + expectedCount + ' 个）。');
     }
+    const events = await readEvents(sessionId);
+    return packBundle(sessionSnapshot, sampleChunks, events);
+  }
+
+  function packBundle(metadata, sampleChunks, events) {
     const exportedUtcMs = Date.now();
     return {
       schema: 'blink-export/v1',
       exported_utc_ms: exportedUtcMs,
       exported_utc_iso: iso(exportedUtcMs),
-      metadata: sessionSnapshot,
-      event_columns: ['sessionId', 'id', 'type', 'timeline_ms', 'utc_ms', 'phone_utc_iso', 'width_ms', 'amplitude_counts', 'algorithm', 'note'],
-      events: (await readEvents(sessionId)).sort((a, b) => a.id - b.id),
+      metadata,
+      event_columns: ['sessionId', 'id', 'type', 'timeline_ms', 'utc_ms', 'phone_utc_iso', 'width_ms', 'amplitude_counts', 'algorithm', 'note', 'threshold_counts'],
+      events: events.sort((a, b) => a.id - b.id),
       sample_columns: ['phone_timeline_ms', 'sample_utc_ms', 'phone_received_utc_ms', 'adc_raw', 'adc_filtered', 'segment_id', 'flags'],
       sample_flag_bits: { saturated_low: 2, saturated_high: 4, blink_calibration: 8 },
       sample_chunks: sampleChunks
     };
+  }
+
+  // Export an honest read-only snapshot of what reached IndexedDB. The
+  // recording flag may be stale after a tab closes, but another tab could
+  // also still be writing: do not finalize or overwrite the stored session.
+  async function buildSavedRecordingSnapshot(id) {
+    const db = await openDb();
+    const [record, chunks, allEvents] = await new Promise((resolve, reject) => {
+      const tx = db.transaction(['sessions', 'chunks', 'events'], 'readonly');
+      const range = IDBKeyRange.bound([id, 0], [id, Number.MAX_SAFE_INTEGER]);
+      const requests = [tx.objectStore('sessions').get(id), tx.objectStore('chunks').getAll(range),
+        tx.objectStore('events').getAll(range)];
+      tx.oncomplete = () => resolve(requests.map(request => request.result));
+      tx.onabort = tx.onerror = () => reject(tx.error || new Error('读取已保存样本失败。'));
+    });
+    if (!record) throw new Error('本机找不到这条记录。');
+    if (record.status !== 'recording') return buildBundle(record);
+    let first = null, last = null, count = 0, saturatedLow = 0, saturatedHigh = 0;
+    const segments = [];
+    for (const chunk of chunks) for (const row of chunk.rows) {
+      first ??= row;
+      last = row;
+      count++;
+      if (row[6] & 2) saturatedLow++;
+      if (row[6] & 4) saturatedHigh++;
+      let seg = segments.at(-1);
+      if (!seg || seg.id !== row[5]) {
+        seg = {id:row[5], start_timeline_ms:row[0], start_utc_ms:row[1]};
+        segments.push(seg);
+      }
+      seg.end_timeline_ms = row[0]; seg.end_utc_ms = row[1];
+    }
+    if (!first) throw new Error('这条未结束记录还没有样本写入本机，无法导出。');
+    const events = allEvents.filter(ev => ev.timeline_ms >= first[0] && ev.timeline_ms <= last[0]);
+    const metadata = {...record, status:'interrupted_snapshot', segments,
+      first_timeline_ms:first[0], first_utc_ms:first[1], last_timeline_ms:last[0], last_utc_ms:last[1],
+      ended_utc_ms:null, ended_utc_iso:null,
+      quality:{...record.quality, received:count, saturatedLow, saturatedHigh},
+      snapshot_export:{original_status:record.status, excluded_events:allEvents.length-events.length,
+        note:'只包含已写入本机的样本。未确认正常结束，不代表完整测试。'}
+    };
+    return packBundle(metadata, chunks, events);
   }
 
   async function readSessionRecord(id) {
@@ -2406,7 +2549,8 @@
     try {
       await waitForWrites();
       if (!S.session || S.session.id !== sessionId) throw new Error('记录已切换，已取消导出。');
-      const bundle = await buildBundle(JSON.parse(JSON.stringify(S.session)));
+      if (S.session.status === 'recording' && !confirm('这条记录未正常结束。导出已保存样本的快照？尚未写入的数据无法恢复。')) return;
+      const bundle = await buildBundle(JSON.parse(JSON.stringify(S.session)), true);
       saveBlob(`blink-${sessionId}.json`, 'application/json;charset=utf-8', [JSON.stringify(bundle)]);
     } finally { S.busy = false; refreshButtons(); }
   }
@@ -2422,7 +2566,8 @@
       await S.writeChain;
       const rec = await readSessionRecord(id);
       if (!rec) throw new Error('本机找不到这条记录。');
-      const bundle = await buildBundle(rec);
+      if (rec.status === 'recording' && !confirm('这条记录未正常结束。导出已保存样本的快照？尚未写入的数据无法恢复。')) return;
+      const bundle = await buildBundle(rec, true);
       saveBlob(`blink-${id}.json`, 'application/json;charset=utf-8', [JSON.stringify(bundle)]);
     } finally { S.busy = false; refreshButtons(); }
   }
@@ -2442,7 +2587,7 @@
       // 先按记录里的样本数估个体量，让用户心里有数（全是内存里拼，太大会卡）
       const totalSamples = all.reduce((n, r) => n + ((r.quality && Number(r.quality.received)) || 0), 0);
       const estMB = (totalSamples * 60 / 1048576).toFixed(0);
-      if (!confirm(`导出全部 ${all.length} 条本机测试？\n\n共约 ${totalSamples.toLocaleString()} 个采样点，文件大约 ${estMB} MB。\n生成和下载都需要一点时间，请不要中途离开页面。`)) return;
+      if (!confirm(`导出全部 ${all.length} 条本机测试？\n\n共约 ${totalSamples.toLocaleString()} 个采样点，文件大约 ${estMB} MB。未结束记录仅导出已保存的快照。\n生成和下载都需要一点时间，请不要中途离开页面。`)) return;
 
       const skipped = [];
       const exportedUtcMs = Date.now();
@@ -2454,7 +2599,7 @@
       let count = 0;
       for (const rec of all.slice().sort((a, b) => a.created_utc_ms - b.created_utc_ms)) {
         try {
-          const bundle = await buildBundle(JSON.parse(JSON.stringify(rec)));
+          const bundle = await buildBundle(JSON.parse(JSON.stringify(rec)), true);
           parts.push(count ? ',' : '', JSON.stringify(bundle));   // 顺带把分隔符拼上
           count++;
         } catch (err) {
@@ -2482,6 +2627,7 @@
       sessions.sort((a, b) => b.created_utc_ms - a.created_utc_ms).forEach(s => {
         const option = document.createElement('option'); option.value = s.id;
         option.textContent = `${s.participant_id || '未命名'} · ${iso(s.created_utc_ms).replace('T', ' ').slice(0, 19)}`;
+        if (s.status === 'recording' || s.status === 'interrupted_snapshot') option.textContent += ' · 未结束';
         if (s.id === selected) option.selected = true;
         ui.sessionList.append(option);
       });
@@ -2520,26 +2666,35 @@
       ui.subjectId.value = session.participant_id || ''; ui.deviceId.value = session.device_id || '';
       ui.operatorId.value = session.operator_id || ''; ui.condition.value = session.condition || '';
       applyConsoleConfig(session.config);
-      lockSessionInputs(false); updateDebugControls(); fillRangeInputs(); setState('已载入', 'bluec'); await analyze();
+      lockSessionInputs(false); updateDebugControls(); fillRangeInputs();
+      const unfinished = session.status === 'recording' || session.status === 'interrupted_snapshot';
+      setState(unfinished ? '未结束记录' : '已载入', unfinished ? 'warnc' : 'bluec');
+      if (unfinished) ui.help.textContent = '这条记录未正常结束。可导出已保存样本的快照，未写入的数据无法恢复。';
+      await analyze();
     } catch (err) { console.error(err); alert(`载入失败：${err.message || err}`); }
     finally { S.busy = false; refreshButtons(); }
   }
 
   // Import is atomic and always allocates fresh local identifiers: never overwrite.
   function validateReanalysis(re, metadata) {
+    const adaptive = re?.algorithm === 'replay-adaptive-threshold/v1';
     if(!re || !re.config || !Array.isArray(re.events) || re.events.length>CFG.maxEvents*4 ||
        !Number.isFinite(re.drop_counts) || re.drop_counts<0 || re.drop_counts>4095 ||
        !Number.isFinite(re.config.refractoryMs) || re.config.refractoryMs<0 || re.config.refractoryMs>10000 ||
-       re.config.manualDropCounts!==re.drop_counts || re.config.minDropCounts!==0 || re.config.manualThresholdEnabled!==true)
+       (adaptive ? re.config.manualThresholdEnabled!==false :
+         re.config.manualDropCounts!==re.drop_counts || re.config.minDropCounts!==0 || re.config.manualThresholdEnabled!==true))
       throw new Error('试调参数缺失、越界或与实际阈值不一致。');
+    const editable = adaptive ? ['manualThresholdEnabled','refractoryMs'] :
+      ['manualDropCounts','minDropCounts','manualThresholdEnabled','refractoryMs'];
     for(const [key,value] of Object.entries(metadata.config)) {
-      if(!['manualDropCounts','minDropCounts','manualThresholdEnabled','refractoryMs'].includes(key) && re.config[key]!==value)
+      if(!editable.includes(key) && re.config[key]!==value)
         throw new Error('试调配置与原始处理参数不一致：'+key);
     }
     let last=-Infinity;
     for(const ev of re.events){
       if(!ev || !Number.isFinite(ev.t) || ev.t<metadata.first_timeline_ms || ev.t>metadata.last_timeline_ms || ev.t<last ||
-         !Number.isFinite(ev.utcMs) || Math.abs(ev.utcMs)>8e15 || !Number.isFinite(ev.width) || ev.width<0 || !Number.isFinite(ev.amp) || ev.amp<0)
+         !Number.isFinite(ev.utcMs) || Math.abs(ev.utcMs)>8e15 || !Number.isFinite(ev.width) || ev.width<0 || !Number.isFinite(ev.amp) || ev.amp<0 ||
+         (adaptive && (!Number.isFinite(ev.threshold_counts) || ev.threshold_counts<0)))
         throw new Error('试调事件无效、越界或时间顺序错误。');
       last=ev.t;
     }
@@ -2564,6 +2719,7 @@
     if(config.calibrationSkipMs!==undefined && (!Number.isFinite(config.calibrationSkipMs) || config.calibrationSkipMs<0 || config.calibrationSkipMs>=config.calibrationMs))throw new Error('记录准备时间无效。');
     if(config.blinkCalEnabled!==undefined && typeof config.blinkCalEnabled!=='boolean')throw new Error('记录标定开关无效。');
     if(config.blinkCalRatio!==undefined && (!Number.isFinite(config.blinkCalRatio) || config.blinkCalRatio<=0 || config.blinkCalRatio>1))throw new Error('记录标定比例无效。');
+    if(config.thresholdPolicy!==undefined && config.thresholdPolicy!=='adaptive-noise-v1')throw new Error('不支持的阈值策略。');
     for(const v of Object.values(config))if(typeof v==='number'&&!Number.isFinite(v))throw new Error('记录参数无效。');
   }
 
@@ -2607,7 +2763,7 @@
             !Number.isInteger(row[5]) || !Number.isInteger(row[6])) throw new Error('采样点无效或时间顺序错误。');
         if(first===null)first=row[0];
         last = row[0]; count++; total++;
-        if (total > 500000) throw new Error('一次最多导入 50 万个采样点，请拆分文件。');
+        if (total > 2500000) throw new Error('一次最多导入 250 万个采样点，请拆分文件。');
       }
       if (!count || !Number.isFinite(m.quality?.received) || count !== m.quality.received) throw new Error('样本数量不完整，未导入任何记录。');
       if (!Number.isFinite(m.first_timeline_ms) || !Number.isFinite(m.last_timeline_ms) || m.last_timeline_ms < m.first_timeline_ms) throw new Error('记录时间范围无效。');
@@ -2624,8 +2780,15 @@
       if(m.reanalysis!==undefined)validateReanalysis(m.reanalysis,m);
       const ids = new Set();
       for (const ev of b.events) {
+        // Older paused sessions could record the stop on the idle timeline.
+        // Only the matching terminal event can extend beyond the last sample.
+        const terminal = ev?.type === 'user_stop' && m.status === 'user_stop' &&
+          Number.isFinite(m.last_utc_ms) && Number.isFinite(m.ended_utc_ms) &&
+          ev.utc_ms === m.ended_utc_ms && ev.utc_ms >= m.last_utc_ms &&
+          Math.abs((ev.timeline_ms-last) - (ev.utc_ms-m.last_utc_ms)) <= 1;
         if (!ev || ev.sessionId !== m.id || !Number.isInteger(ev.id) || ids.has(ev.id) || typeof ev.type !== 'string' ||
-            !Number.isFinite(ev.timeline_ms) || ev.timeline_ms<first || ev.timeline_ms>last || !Number.isFinite(ev.utc_ms)) throw new Error('事件数据无效。');
+            !Number.isFinite(ev.timeline_ms) || ev.timeline_ms<first || (ev.timeline_ms>last && !terminal) ||
+            !Number.isFinite(ev.utc_ms) || Math.abs(ev.utc_ms)>8e15) throw new Error('事件数据无效。');
         ids.add(ev.id);
       }
     }
@@ -2666,7 +2829,7 @@
   function stopReplay() {
     S.replay = null;
     document.body.classList.remove('replay-focused');
-    for(const id of ['trialDrop','trialRefractory','trialReset','trialExport']){const el=document.getElementById(id);if(el)el.disabled=true;}
+    for(const id of ['trialDrop','trialRefractory','trialAdaptive','trialReset','trialExport']){const el=document.getElementById(id);if(el)el.disabled=true;}
     const trialStatus=document.getElementById('trialStatus');if(trialStatus)trialStatus.textContent='先开始重放再试调。未导出的试调结果不会保存；原始数据不受影响。';
     const originalConfig=document.getElementById('originalReplayConfig');if(originalConfig)originalConfig.textContent='';
     const label = document.getElementById('replayStatus');
@@ -2687,7 +2850,7 @@
     document.getElementById('replaySeek').value = String(r.position-r.start);
     document.getElementById('replayStatus').textContent = `${((r.position-r.start)/1000).toFixed(1)} / ${((r.end-r.start)/1000).toFixed(1)} 秒 · 原始 ${r.events.filter(e=>e.t<=r.position).length} 次${r.trial ? ' / 试调 '+r.trial.events.filter(e=>e.t<=r.position).length+' 次' : ''} · ${iso(row[1])}`;
   }
-  async function applyReplayTrial() {
+  async function applyReplayTrial(adaptive = false) {
     const r=S.replay;
     if(!isConsolePage || !r)return;
     // 以前这里把「登录态过期」和「没有重放」一起 return 掉了 —— 静默什么都不做。
@@ -2700,13 +2863,16 @@
     }
     const revision=(r.trialRevision||0)+1;r.trialRevision=revision;
     const input=document.getElementById('trialDrop'), gap=document.getElementById('trialRefractory');
-    const drop=Number(input.value), refractory=Number(gap.value);
+    const drop=adaptive ? (r.originalDrop ?? r.original.config.minDropCounts) : Number(input.value);
+    const refractory=Number(gap.value);
     const status=document.getElementById('trialStatus');
     r.trial=null;
-    if(input.value.trim()==='' || gap.value.trim()==='' || !Number.isFinite(drop) || drop<0 || drop>4095 || !Number.isFinite(refractory) || refractory<0 || refractory>10000){status.textContent='请输入有效阈值（0–4095）和间隔（0–10000 ms）。';return;}
-    status.textContent='正在按试调参数重算整条记录…';
-    const config={...r.original.config,manualThresholdEnabled:true,manualDropCounts:drop,minDropCounts:0,refractoryMs:refractory};
-    const detector=makeOfflineDetector(config,drop,r.original.blink_calibration);
+    if((!adaptive && input.value.trim()==='') || gap.value.trim()==='' || !Number.isFinite(drop) || drop<0 || drop>4095 || !Number.isFinite(refractory) || refractory<0 || refractory>10000){status.textContent='请输入有效阈值（0–4095）和间隔（0–10000 ms）。';return;}
+    status.textContent=adaptive ? '正在按近期噪声自适应重算…' : '正在按试调参数重算整条记录…';
+    const config=adaptive
+      ? {...r.original.config,manualThresholdEnabled:false,refractoryMs:refractory}
+      : {...r.original.config,manualThresholdEnabled:true,manualDropCounts:drop,minDropCounts:0,refractoryMs:refractory};
+    const detector=makeOfflineDetector(config,drop,r.original.blink_calibration,adaptive);
     const events=[];
     for(let i=0;i<r.rows.length;i++){
       if(i%2000===0){
@@ -2716,8 +2882,12 @@
       }
       const ev=detector(r.rows[i]);if(ev)events.push(ev);
     }
-    r.trial={config,drop_counts:drop,events,computed_utc_ms:Date.now(),algorithm:'replay-fixed-threshold/v1',calibration_policy:'reuse-original-calibration-boundary-and-baseline'};
-    status.textContent=`原始阈值 ${r.originalDrop ?? '未记录'} / ${r.events.length} 次 → 试调阈值 ${drop} / ${events.length} 次。仅改变回放标记；不覆盖原始参数和事件。`;
+    r.trial={config,drop_counts:drop,events,computed_utc_ms:Date.now(),
+      algorithm:adaptive ? 'replay-adaptive-threshold/v1' : 'replay-fixed-threshold/v1',
+      calibration_policy:'reuse-original-calibration-boundary-and-baseline'};
+    status.textContent=adaptive
+      ? `原始 ${r.events.length} 次 → 自适应候选 ${events.length} 次（起始阈值 ${Math.round(drop)}，随后按噪声调整）。请结合波形确认，原始数据未改变。`
+      : `原始阈值 ${r.originalDrop ?? '未记录'} / ${r.events.length} 次 → 试调阈值 ${drop} / ${events.length} 次。仅改变回放标记；不覆盖原始参数和事件。`;
     seekReplay(r.position);
   }
   async function exportReplayComparison() {
@@ -2760,14 +2930,15 @@
           const trialConf = { ...re.config };
           S.replay.trial = {
             config: trialConf, drop_counts: re.drop_counts,
-            events: re.events.map(ev => ({ t: ev.t, utcMs: ev.utcMs, width: ev.width, amp: ev.amp })),
+            events: re.events.map(ev => ({ t: ev.t, utcMs: ev.utcMs, width: ev.width, amp: ev.amp,
+              ...(re.algorithm === 'replay-adaptive-threshold/v1' ? { threshold_counts: ev.threshold_counts } : {}) })),
             computed_utc_ms: re.computed_utc_ms, algorithm: re.algorithm,
             calibration_policy: re.calibration_policy, restored_from_file: true,
           };
           document.getElementById('trialDrop').value = re.drop_counts;
           document.getElementById('trialRefractory').value = trialConf.refractoryMs;
           document.getElementById('trialStatus').textContent =
-            `已从对比文件恢复试调：阈值 ${re.drop_counts} / ${S.replay.trial.events.length} 次；原始 ${events.length} 次。`
+            `已从对比文件恢复试调：${re.algorithm === 'replay-adaptive-threshold/v1' ? '自适应候选' : '固定阈值 ' + re.drop_counts} / ${S.replay.trial.events.length} 次；原始 ${events.length} 次。`
             + '改参数会按新值重算，原始数据不受影响。';
           } catch (err) {
             // Old database records may predate current import validation.
@@ -2808,7 +2979,7 @@
       <div class="data-block"><h3>① 导入数据</h3>
         <label for="importFile">选择数据文件</label>
         <input id="importFile" type="file" accept=".json,application/json">
-        <p class="tiny">支持单条 / 全部数据 · 最大 50 MB · 重复导入保留独立副本</p>
+        <p class="tiny">支持单条 / 全部数据 · 最大 128 MiB、250 万采样点 · 大文件建议用电脑 · 重复导入保留独立副本</p>
         <button id="btnImport" type="button" class="ghost">导入到本机</button>
         <p id="importStatus" class="tiny" role="status"></p>
       </div>
@@ -2830,7 +3001,7 @@
         <div class="trial-fields"><label>下降阈值（ADC）<input id="trialDrop" type="number" min="0" max="4095" step="0.1"></label><label>最短间隔（ms）<input id="trialRefractory" type="number" min="0" max="10000" step="10"></label></div>
         <p id="trialStatus" class="tiny" role="status">先开始重放，再修改参数；修改仅用于当前记录试算，不用于正在采集的数据。</p>
         <details><summary>查看原始阈值及完整参数</summary><pre id="originalReplayConfig" class="tiny"></pre></details>
-        <div class="trial-actions"><button id="trialReset" type="button" class="ghost">恢复原始标记</button><button id="trialExport" type="button" class="ghost">导出原始＋试调数据</button></div>
+        <div class="trial-actions"><button id="trialAdaptive" type="button" class="ghost">自适应重算</button><button id="trialReset" type="button" class="ghost">恢复原始标记</button><button id="trialExport" type="button" class="ghost">导出原始＋试调数据</button></div>
       </details>
     </div>`;
   document.getElementById('scope').closest('section').insertAdjacentElement('afterend',dataPanel);
@@ -2845,16 +3016,19 @@
   actions.append(ui.btnLoad,ui.btnExportOne,ui.btnExportAll,ui.btnDeleteSession);
   oldRecordField.remove();oldLoadField.remove();
   document.getElementById('btnImport').onclick=async()=>{
+    if(S.importReading || S.busy)return;
     const file=document.getElementById('importFile').files[0];
     const status=document.getElementById('importStatus');
+    S.importReading=true; refreshButtons();
     try{
       if(!file)throw new Error('请先选择数据文件。');
-      if(file.size>50*1024*1024)throw new Error('文件超过 50 MB，请拆分后导入。');
+      if(file.size>128*1024*1024)throw new Error('文件超过 128 MiB，请拆分后导入。');
       status.textContent='正在校验并导入…';
       const ids=await importData(JSON.parse(await file.text()));
       status.textContent=`已导入 ${ids.length} 条，记录列表已选中首条。点击「打开所选测试」后重放。`;
       document.getElementById('importFile').value='';
     }catch(err){status.textContent='导入失败：'+err.message;}
+    finally{S.importReading=false; refreshButtons();}
   };
   document.getElementById('btnReplay').onclick=()=>startReplay().catch(err=>alert('重放失败：'+err.message));
   document.getElementById('btnReplayStop').onclick=stopReplay;
@@ -2864,6 +3038,7 @@
   window.addEventListener('pointerup',finishScrub);window.addEventListener('pointercancel',finishScrub);
   seek.oninput=e=>{if(S.replay)seekReplay(S.replay.start+Number(e.target.value));};
   for(const id of ['trialDrop','trialRefractory'])document.getElementById(id).oninput=()=>applyReplayTrial().catch(err=>{document.getElementById('trialStatus').textContent='重算失败：'+err.message;});
+  document.getElementById('trialAdaptive').onclick=()=>applyReplayTrial(true).catch(err=>{document.getElementById('trialStatus').textContent='重算失败：'+err.message;});
   document.getElementById('trialReset').onclick=()=>{const r=S.replay;if(!r)return;r.trialRevision=(r.trialRevision||0)+1;r.trial=null;document.getElementById('trialDrop').value=r.originalDrop??'';document.getElementById('trialRefractory').value=r.original.config.refractoryMs;document.getElementById('trialStatus').textContent='已恢复原始事件标记，原始参数未改变。';seekReplay(r.position);};
   document.getElementById('trialExport').onclick=()=>exportReplayComparison().catch(err=>alert(err.message));
   }
