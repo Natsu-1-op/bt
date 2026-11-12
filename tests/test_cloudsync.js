@@ -2,9 +2,10 @@ const assert = require('node:assert/strict');
 const {loadPage} = require('./helpers/page');
 const {fakeCloud} = require('./helpers/cloud');
 const config={noiseMultiplier:2,refractoryMs:0,minDropCounts:8,manualThresholdEnabled:true,manualDropCounts:8,blinkCalEnabled:false,blinkCalRatio:0.75};
+const latest={...config,updatedBy:'test.html:field-default-v2'};
 (async()=>{
  for(const page of ['index.html','test.html']) {
-  const c=fakeCloud(config), e=loadPage(page,{setup:w=>{w.firebase=c.cloud;}});
+  const c=fakeCloud(latest), e=loadPage(page,{setup:w=>{w.firebase=c.cloud;}});
   try {
    const a=e.app; a.S.connected=true;
    await Promise.all([a.startWithCloudSync(),a.startWithCloudSync()]);
@@ -17,12 +18,27 @@ const config={noiseMultiplier:2,refractoryMs:0,minDropCounts:8,manualThresholdEn
    assert(a.ui.cloudGate.classList.contains('hidden'));
   }finally{e.close();}
  }
+ for(const page of ['index.html','test.html']){
+  const old=fakeCloud({...config,updatedBy:'test.html',blinkCalEnabled:true,minDropCounts:40,oledText:'现场采集'});
+  const e=loadPage(page,{setup:w=>{w.firebase=old.cloud;}});
+  try{
+   const a=e.app;a.S.connected=true;await a.startWithCloudSync();
+   const cfg=a.S.session.config;
+   assert.equal(cfg.manualThresholdEnabled,false);
+   assert.equal(cfg.blinkCalEnabled,false);
+   assert.equal(cfg.minDropCounts,8);
+   assert.equal(cfg.noiseMultiplier,4);
+   assert.equal(cfg.refractoryMs,300);
+   assert.equal(cfg.thresholdPolicy,'adaptive-bipolar-v2');
+   assert.equal(a.ui.oledText.value,'现场采集','legacy display settings still load');
+  }finally{e.close();}
+ }
  {
   const c=fakeCloud(config),e=loadPage('test.html',{setup:w=>{w.firebase=c.cloud;}});
   try {
    const a=e.app;a.ui.fMinDrop.value='8';a.ui.manualDrop.value='8';a.ui.manualThresholdEnabled.checked=true;
    a.markConsoleConfigDirty(); const saved=await a.saveConsoleConfigToCloud();
-   assert.equal(saved.manualDropCounts,8);assert.equal(saved.minDropCounts,8);
+   assert.equal(saved.manualDropCounts,8);assert.equal(saved.minDropCounts,8);assert.equal(saved.updatedBy,latest.updatedBy);
    a.ui.fMinDrop.value='12';await a.loadConsoleConfigFromCloud();assert.equal(a.ui.fMinDrop.value,'8');
    a.ui.fMinDrop.value='7';a.markConsoleConfigDirty();a.S.connected=true;
    const reads=c.reads.length;await a.startWithCloudSync();
