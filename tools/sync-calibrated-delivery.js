@@ -33,7 +33,7 @@ function sync(source,fitFile,stage,extraFile){
         matched:fit.matched,overlap_ms:fit.overlap_ms,historical_outside_overlap:fit.historical_outside_overlap,
         accepted:fit.accepted,rejected:fit.rejected,confirmed:fit.confirmed,video_only_confirmed:fit.video_only_confirmed,
         remaining:fit.differences,deep_review:fit.deep_review,deep_alignment:fit.deep_alignment,
-        alternate_video:fit.alternate_video};
+        alternate_video:fit.alternate_video,manual_review:fit.manual_review};
       if(fit.calibrated_events){
         input.previous_reanalysis=input.reanalysis;
         input.reanalysis={...input.reanalysis,algorithm:'replay-video-calibrated/v1',calibration_policy:'video-and-sensor-evidence',
@@ -81,6 +81,7 @@ function sync(source,fitFile,stage,extraFile){
   assert.equal(playback.records.length,index.records.length);
   write(file,playback);
   write(path.join(stage,researchName,'记录索引.json'),index);
+  if(fit.manual_review_report)write(path.join(stage,researchName,'人工复核应用报告.json'),fit.manual_review_report);
   console.log(JSON.stringify({records:index.records.length,videoCalibrated:index.records.filter(r=>r.video_calibration.added!==undefined&&r.video_calibration.pending!==null).length}));
 }
 

@@ -29,18 +29,19 @@ function trialEvents(app,record,rows,previous){
   return events.map(({event,factor})=>({ms:event.t-start,amp:event.amp,event,factor}));
 }
 
-function calibrate(app,bundle,baseline,videoDir,cache){
+function calibrate(app,bundle,baseline,videoDir,cache,correction){
   const record=bundle.original;
   const start=record.metadata.first_timeline_ms;
   const track=sensorTracks(bundle);
-  const file=baseline.video_file;
+  const file=correction?.video??baseline.video_file;
   const frames=loadFrames(cache,file&&path.join(videoDir,file));
   const filename=/^VID(\d{4})(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)\./i.exec(file??'');
   const nominal=filename?track.first_utc_ms-beijingTimestamp(`${filename[1]}-${filename[2]}-${filename[3]}T${filename[4]}:${filename[5]}:${filename[6]}`):NaN;
   const base={subject:baseline.subject,video_file:file,record_id:track.record_id,first_sample_utc_ms:track.first_utc_ms,nominal_offset_ms:nominal};
   if(!frames?.some(f=>Number.isFinite(f.ear)))return {...base,status:'待人工确认',reason:'录像未提取到可用眼部关键点',alignment:null};
   const video=videoSignals(frames);
-  const alignment=chooseAlignment(track,video,nominal);
+  const alignment=Number.isFinite(correction?.offset_ms)?{offset:correction.offset_ms,reliable:true,anchor:'manual'}:
+    chooseAlignment(track,video,nominal);
   if(!alignment?.reliable)return {...base,status:'待人工确认',reason:'两个时间窗未能独立确认对时',alignment};
   const primary=track.reanalysis.filter(e=>e.source==='adaptive');
   const historical=bundle.reanalysis.events;
@@ -65,19 +66,24 @@ function calibrate(app,bundle,baseline,videoDir,cache){
 }
 
 function main(){
-  const [research,videoDir,out]=process.argv.slice(2);
-  if(!out)throw Error('用法：node tools/calibrate-video-delivery.js 研究目录 视频目录 MediaPipe复核目录');
+  const [research,videoDir,out,correctionFile,outputFile]=process.argv.slice(2);
+  if(!out)throw Error('用法：node tools/calibrate-video-delivery.js 研究目录 视频目录 MediaPipe复核目录 [对时修正.json] [新结果.json]');
   const index=read(path.join(research,'记录索引.json'));
   const baseline=read(path.join(out,'复核结果.json'));
+  const corrections=correctionFile?read(correctionFile):{};
   const app=loadPage('test.html');
-  const checkpoint=path.join(out,'双端标定结果.json');
+  const checkpoint=outputFile??path.join(out,'双端标定结果.json');
   const results=[];
   try{
     for(const row of index.records){
       const initial=baseline.results.find(r=>r.subject===row.subject);
       if(!initial)throw Error('缺少批量视频结果 '+row.subject);
       const bundle=read(path.join(research,row.file));
-      const result=calibrate(app.app,bundle,initial,videoDir,path.join(out,'.cache'));
+      const correction=corrections[row.subject];
+      if(correction&&(typeof correction!=='object'||!Number.isFinite(correction.offset_ms)||
+        (correction.video!==undefined&&(typeof correction.video!=='string'||path.basename(correction.video)!==correction.video))))
+        throw Error(`${row.subject} 号对时修正无效`);
+      const result=calibrate(app.app,bundle,initial,videoDir,path.join(out,'.cache'),correction);
       results.push(result);
       write(checkpoint,{schema:'blink-video-calibrated/v1',complete:false,results});
       console.log(row.subject,result.status,result.matched??0,result.accepted?.length??0,result.rejected?.length??0,result.confirmed?.length??0,result.differences?.length??0,result.alignment?.offset??'—');

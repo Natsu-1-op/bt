@@ -132,6 +132,11 @@
 
   <section class="card">
     <h2>测试信息</h2>
+    <details><summary>与录像对时（可选）</summary>
+      <p class="note">让录像拍到下方提示区，在计数开始后和结束前各点一次。闪光会记在本次数据里。</p>
+      <button id="btnVideoSync" class="ghost" disabled>发出同步闪光</button>
+      <div id="videoSyncCue" role="status" style="min-height:3rem;padding:10px;margin-top:8px;background:#15243a;color:#fff;border-radius:8px">等待同步</div>
+    </details>
     <div class="fields">
       <div class="field"><label>受试者编号</label><input id="subjectId" type="text" maxlength="64" placeholder="例如 26"></div>
     </div>
@@ -192,6 +197,6 @@
   </div>
 </main>
 
-<script src="blink-app.js?v=20261114"></script>
+<script src="blink-app.js?v=20261114-2"></script>
 </body>
 </html>

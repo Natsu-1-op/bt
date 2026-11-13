@@ -31,6 +31,13 @@ input[type=number]{width:7em}button:disabled{opacity:.5}video{display:block;widt
 <input id="reviewStartTime" type="datetime-local" step=".001">
 </label>
 <p>填实际拍摄时间，不用文件修改时间。视频与记录不必同时开始，系统只分析重叠片段。若只知道视频中某一帧的时间，可用下方选项。</p>
+<div id="reviewCues" hidden>
+<h2 style="font-size:1rem">用两次同步闪光对时</h2>
+<p id="reviewCueText"></p>
+<div class="row">
+<label>第一次闪光（秒）<input id="reviewCueFirst" type="number" min="0" step=".001"></label><button id="reviewSetFirst">取当前位置</button>
+<label>最后一次闪光（秒）<input id="reviewCueLast" type="number" min="0" step=".001"></label><button id="reviewSetLast">取当前位置</button>
+</div></div>
 <details>
 <summary>从视频某一帧对齐，或限制分析范围</summary>
 <div class="row" style="margin-top:10px">
@@ -45,6 +52,6 @@ input[type=number]{width:7em}button:disabled{opacity:.5}video{display:block;widt
 <p id="reviewStatus" role="status">请先选择视频、研究记录并填写时间。</p>
 <div id="reviewResults"></div>
 </section>
-<script src="video-review.js?v=20261114"></script>
+<script src="video-review.js?v=20261114-2"></script>
 </body>
 </html>

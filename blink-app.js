@@ -521,6 +521,8 @@
     ui.btnPause.disabled = !(running || paused);
     ui.btnPause.textContent = paused ? '继续测试' : '暂停测试';
     ui.btnStop.disabled = !(running || paused || cal);
+    const videoSyncButton = $('btnVideoSync');
+    if (videoSyncButton) videoSyncButton.disabled = !running || !c || S.busy || !!S.videoSyncPending;
     const hasSession = !!S.session;
     ui.btnClear.disabled = !(hasSession || S.count);
     ui.btnExportBundle.disabled = !hasSession || running || paused || cal;
@@ -1233,6 +1235,8 @@
       S.range.center = null; S.range.half = CFG.adcMax / 2;
       S.quality = { received: 0, saturatedLow: 0, saturatedHigh: 0 };
       S.clock = { anchorTimeline: null, anchorUtc: null, lastWallOffset: null };
+      S.videoSyncCount = 0;
+      if ($('videoSyncCue')) $('videoSyncCue').textContent = '等待同步';
       S.session = {
         id: newId(), schema: 'blink-collector/v1', status: 'recording',
         created_utc_ms: Date.now(), created_utc_iso: iso(Date.now()),
@@ -1546,6 +1550,44 @@
     if (!S.lastSampleAt) return S.lastT;
     return S.lastT + Math.max(0, performance.now() - S.lastSampleAt);
   }
+
+  function markVideoSync() {
+    if (S.phase !== 'RUN' || !S.connected || S.busy || S.videoSyncPending || !S.session) return;
+    const session = S.session, cue = $('videoSyncCue');
+    if (!cue) return;
+    S.videoSyncPending = true;
+    refreshButtons();
+    requestAnimationFrame(() => {
+      if (S.session !== session || S.phase !== 'RUN' || !S.connected || S.busy || document.hidden) {
+        S.videoSyncPending = false;
+        refreshButtons();
+        return;
+      }
+      const lag = performance.now() - S.lastSampleAt;
+      if (!S.activeSegment || !Number.isFinite(session.last_timeline_ms) || !Number.isFinite(session.last_utc_ms) || lag > 160) {
+        cue.textContent = '采样暂不连续，请稍后重试';
+        S.videoSyncPending = false;
+        refreshButtons();
+        return;
+      }
+      const ordinal = ++S.videoSyncCount;
+      const sampleTime = session.last_timeline_ms;
+      addEvent('video_sync_cue', sampleTime, session.last_utc_ms, {
+        ordinal, cue_timeline_ms: sampleTime + Math.max(0, lag), cue_phone_utc_ms: Date.now(),
+        sample_age_ms: Math.round(lag), segment_id: S.activeSegment.id
+      });
+      cue.textContent = `同步 ${ordinal}`;
+      cue.style.background = '#fff'; cue.style.color = '#102033';
+      setTimeout(() => {
+        cue.style.background = '#15243a'; cue.style.color = '#fff';
+        if (S.session === session) cue.textContent = `已记录 ${ordinal} 次同步`;
+        S.videoSyncPending = false;
+        refreshButtons();
+      }, 500);
+    });
+  }
+
+  if ($('btnVideoSync')) $('btnVideoSync').onclick = markVideoSync;
 
   function updateLiveStats(nowMs = liveTimelineNow()) {
     if (!S.session || !Number.isFinite(nowMs)) return;
@@ -2400,7 +2442,7 @@
     if (!S.session || !Number.isFinite(S.session.first_timeline_ms) || !Number.isFinite(S.session.last_timeline_ms)) return;
     const t0 = S.session.first_timeline_ms, t1 = S.session.last_timeline_ms;
     ui.fT0.value = 0;
-    ui.fT1.value = Math.round((t1 - t0) / 1000);
+    ui.fT1.value = Math.ceil((t1 - t0) / 1000);
   }
 
   ui.btnFull.onclick = () => { if (!S.busy) { fillRangeInputs(); analyze().catch(console.error); } };
@@ -2527,7 +2569,7 @@
     const t0rec = session.first_timeline_ms, t1rec = session.last_timeline_ms;
     const totalSec = (t1rec - t0rec) / 1000;
     let a = Number(ui.fT0.value) || 0;
-    let b = Number(ui.fT1.value) || Math.round(totalSec);
+    let b = Number(ui.fT1.value) || totalSec;
     a = clamp(a, 0, totalSec); b = clamp(b, 0, totalSec);
     if (b <= a) { clearSummary(); ui.help.textContent = '查看区间的结束时间必须大于开始时间。'; return; }
 
@@ -2540,25 +2582,36 @@
     const liveDrop = session.blink_calibration && Number.isFinite(session.blink_calibration.threshold)
       ? session.blink_calibration.threshold
       : (session.detector && Number.isFinite(session.detector.drop_counts) ? session.detector.drop_counts : null);
-    const detector = makeOfflineDetector(session.config, liveDrop, session.blink_calibration);
-    const allEvents = [];
-    await visitChunks(session.id, chunk => {
-      for (const row of chunk.rows) { const event = detector(row); if (event) allEvents.push(event); }
-    });
+    let allEvents = null;
+    if (session.reanalysis?.algorithm === 'replay-video-calibrated/v1') {
+      try {
+        validateReanalysis(session.reanalysis, session);
+        allEvents = session.reanalysis.events;
+      } catch { /* Older local data may have damaged optional analysis. */ }
+    }
+    if (!allEvents) {
+      const detector = makeOfflineDetector(session.config, liveDrop, session.blink_calibration);
+      allEvents = [];
+      await visitChunks(session.id, chunk => {
+        for (const row of chunk.rows) { const event = detector(row); if (event) allEvents.push(event); }
+      });
+    }
     if (!current()) return;
     const from = t0rec + a * 1000, to = t0rec + b * 1000;
     const ev = allEvents.filter(e => e.t >= from && e.t <= to);
     const span = to - from;
+    const formalStart = session.config?.blinkCalEnabled ? session.blink_calibration?.end_timeline_ms : session.detector?.calibrated_timeline_ms;
+    const measuredTime = (start,end) => activeDurationMs(session, Number.isFinite(formalStart)?Math.max(start,formalStart):start, end);
 
     // 滑窗
     const series = [];
     if (span <= winMs) {
-      const activeMs = activeDurationMs(session, from, to);
+      const activeMs = measuredTime(from, to);
       series.push({ t: from + span / 2, bpm: activeMs >= 1000 ? ev.length / (activeMs / 1000) * 60 : null, n: ev.length });
     } else {
       for (let w = from; w + winMs <= to + 1; w += stepMs) {
         const n = ev.filter(e => e.t >= w && e.t < w + winMs).length;
-        const activeMs = activeDurationMs(session, w, w + winMs);
+        const activeMs = measuredTime(w, w + winMs);
         series.push({ t: w + winMs / 2, bpm: activeMs >= 1000 ? n / (activeMs / 1000) * 60 : null, n });
       }
     }
@@ -2598,7 +2651,7 @@
       series.filter(s => Number.isFinite(s.bpm)).forEach(s => { ctx.beginPath(); ctx.arc(x(s.t), y(s.bpm), 2.2, 0, Math.PI * 2); ctx.fill(); });
     }
 
-    const activeMs = activeDurationMs(session, from, to);
+    const activeMs = measuredTime(from, to);
     const avg = activeMs >= 1000 ? ev.length / (activeMs / 1000) * 60 : null;
     ui.sAvg.textContent = avg === null ? '--' : `${avg.toFixed(1)} 次/分`;
     ui.sCount.textContent = `${ev.length} 次`;
@@ -2659,7 +2712,8 @@
       exported_utc_ms: exportedUtcMs,
       exported_utc_iso: iso(exportedUtcMs),
       metadata,
-      event_columns: ['sessionId', 'id', 'type', 'timeline_ms', 'utc_ms', 'phone_utc_iso', 'width_ms', 'amplitude_counts', 'algorithm', 'note', 'threshold_counts', 'polarity'],
+      event_columns: ['sessionId', 'id', 'type', 'timeline_ms', 'utc_ms', 'phone_utc_iso', 'width_ms', 'amplitude_counts', 'algorithm', 'note', 'threshold_counts', 'polarity',
+        'ordinal', 'cue_timeline_ms', 'cue_phone_utc_ms', 'sample_age_ms', 'segment_id'],
       events: events.sort((a, b) => a.id - b.id),
       sample_columns: ['phone_timeline_ms', 'sample_utc_ms', 'phone_received_utc_ms', 'adc_raw', 'adc_filtered', 'segment_id', 'flags'],
       sample_flag_bits: { saturated_low: 2, saturated_high: 4, blink_calibration: 8 },

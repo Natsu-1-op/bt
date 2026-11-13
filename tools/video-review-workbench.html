@@ -10,7 +10,8 @@
 </style>
 <body>
 <h1>眨眼视频与波形复核</h1>
-<div class="row toolbar"><label>受试者 <select id="subject"></select></label><button id="export">保存复核标记</button></div>
+<div class="row toolbar"><label>受试者 <select id="subject"></select></label><div class="actions"><label class="file" for="importMarks">载入复核标记</label><input id="importMarks" type="file" accept=".json,application/json" hidden><button id="export">保存复核标记</button></div></div>
+<p id="markStatus" class="muted" role="status"></p>
 <p id="summary" role="status"></p>
 <div class="pair">
   <section><h2>现场视频</h2><video id="video" preload="metadata" playsinline controls></video>
@@ -30,6 +31,7 @@
   <div class="row"><select id="filter" aria-label="差异类型"><option value="">全部差异</option><option>仅视频</option><option>仅传感器</option><option>视频闭眼明显</option><option>试算有响应</option><option>试算新增仅传感器</option><option>尚未标记</option></select>
     <button id="prev" aria-label="上一处">上一处</button><select class="diff" id="diff" aria-label="差异位置"></select><button id="next" aria-label="下一处">下一处</button><button id="nextUnmarked">下一处未标记</button></div>
   <div class="actions" id="decisions"><button data-label="是眨眼">是眨眼</button><button data-label="非眨眼">非眨眼</button><button data-label="看不清">看不清</button><button data-label="">清除标记</button></div>
+  <p class="muted">快捷键 1 是眨眼 · 2 非眨眼 · 3 看不清 · N 下一处未标记</p>
   <p id="hint" class="muted" role="status"></p>
 </section>
 <!-- REVIEW_DATA -->
@@ -45,6 +47,10 @@ let row, list=[], selected=-1, position=0, center=0, clipEnd=null, blob=null, pe
 const second=ms=>(ms/1000).toFixed(3);
 const fmt=new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',dateStyle:'short',timeStyle:'medium',hourCycle:'h23'});
 const markKey=(d,record=row)=>`${record.id}:${record.videoFile}:${d.video}:${d.type}`;
+const decisions=new Set(['是眨眼','非眨眼','看不清']);
+const markMatches=(mark,d)=>Number.isFinite(mark?.video_ms)&&Number.isFinite(mark?.sensor_ms)&&
+  d.type===mark.type&&Math.abs(d.video-(mark.source_video_ms??mark.video_ms))<.01&&
+  Math.abs(d.sensor-(mark.source_sensor_ms??mark.sensor_ms))<.01;
 const clamp=(v,lo,hi)=>Math.min(hi,Math.max(lo,v));
 const hasOffset=()=>Number.isFinite(offset);
 const option=(label,value)=>new Option(label,String(value));
@@ -246,19 +252,56 @@ $('segment').onclick=async()=>{
   const at=videoAt(d);seekVideo(Math.max(0,at-1000));clipEnd=(at+1000)/1000;
   try{await video.play();}catch{clipEnd=null;$('videoStatus').textContent='当前视频无法播放。';}
 };
-for(const b of $('decisions').querySelectorAll('button'))b.onclick=()=>{
-  const d=list[selected];if(!d)return;const decision=b.dataset.label;
-  if(decision)marks[markKey(d)]={subject:row.subject,record_id:row.id,video_file:row.videoFile,video_ms:videoAt(d),sensor_ms:sensorAt(d),offset_ms:offset,type:d.type,decision};else delete marks[markKey(d)];
+function saveDecision(decision){
+  const d=list[selected];if(!d)return;
+  if(decision)marks[markKey(d)]={subject:row.subject,record_id:row.id,video_file:row.videoFile,video_ms:videoAt(d),sensor_ms:sensorAt(d),
+    source_video_ms:d.video,source_sensor_ms:d.sensor,offset_ms:offset,type:d.type,decision};else delete marks[markKey(d)];
   let saved=true;
   try{localStorage.setItem(key,JSON.stringify(marks));}catch{saved=false;}
-  if($('filter').value==='尚未标记')refreshList(d);else selectDiff(selected,false);
+  if($('filter').value==='尚未标记'){
+    const following=list.slice(selected+1).find(item=>!marks[markKey(item)]);
+    refreshList(following??d);
+  }else selectDiff(selected,false);
   if(!saved)$('hint').textContent+=' 请保存复核标记，当前浏览器无法自动保留。';
+}
+for(const b of $('decisions').querySelectorAll('button'))b.onclick=()=>saveDecision(b.dataset.label);
+window.addEventListener('keydown',event=>{
+  if(event.altKey||event.ctrlKey||event.metaKey||event.shiftKey||event.repeat||event.target.closest?.('input,select,textarea,video,button,[contenteditable]'))return;
+  const decision={'1':'是眨眼','2':'非眨眼','3':'看不清'}[event.key];
+  if(decision){event.preventDefault();saveDecision(decision);}
+  if(event.key.toLowerCase()==='n'){event.preventDefault();$('nextUnmarked').click();}
+});
+$('importMarks').onchange=async()=>{
+  const file=$('importMarks').files[0];if(!file)return;
+  const status=$('markStatus');
+  try{
+    if(file.size>4*1024*1024)throw Error('标记文件过大。');
+    const data=JSON.parse(await file.text());
+    if(!['blink-video-review-labels/v1','blink-video-review-labels/v2'].includes(data.schema)||!Array.isArray(data.marks))throw Error('请选择复核标记 JSON。');
+    const merged={...marks};let added=0,skipped=0;
+    for(const mark of data.marks){
+      const record=cases.find(r=>r.id===mark?.record_id&&r.subject===mark.subject&&r.videoFile===mark.video_file);
+      const difference=record?.differences.find(d=>markMatches(mark,d));
+      if(!difference||!decisions.has(mark.decision)){skipped++;continue;}
+      const id=markKey(difference,record);
+      if(merged[id]?.decision&&merged[id].decision!==mark.decision){skipped++;continue;}
+      merged[id]=mark;added++;
+    }
+    marks=merged;
+    let saved=true;try{localStorage.setItem(key,JSON.stringify(marks));}catch{saved=false;}
+    if(row)refreshList(list[selected]);
+    status.textContent=`已载入 ${added} 条，跳过 ${skipped} 条不匹配或有冲突的标记。${saved?'':'请保存标记文件。'}`;
+  }catch(error){status.textContent=error.message;}
+  finally{$('importMarks').value='';}
 };
 function saveJson(name,data){
   const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));
   const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
-$('export').onclick=()=>saveJson('视频复核标记.json',{schema:'blink-video-review-labels/v1',marks:Object.values(marks)});
+$('export').onclick=()=>{
+  const current=cases.flatMap(record=>record.differences.map(d=>marks[markKey(d,record)]).filter(Boolean));
+  saveJson('视频复核标记.json',{schema:'blink-video-review-labels/v2',marks:current});
+};
 $('exportAlign').onclick=()=>saveJson('对时修正.json',Object.fromEntries(Object.values(alignments).map(({subject,video,offset_ms})=>[subject,{video,offset_ms}])));
 window.addEventListener('resize',draw);
 if(cases.length){$('subject').selectedIndex=Math.max(0,cases.findIndex(r=>r.differences.length));selectSubject();}

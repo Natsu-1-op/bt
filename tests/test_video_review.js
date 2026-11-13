@@ -1,5 +1,5 @@
 const assert=require('node:assert/strict');
-const {videoEvents,compare,sensorTracks,frameEar,beijingTimestamp,videoAlignment}=require('../video-review');
+const {videoEvents,compare,sensorTracks,frameEar,beijingTimestamp,videoAlignment,cueAlignment}=require('../video-review');
 const {alignOffset,matchVideos,summarize,reportPage}=require('../tools/review-video-batch');
 const frames=[];
 for(let t=0;t<=3600;t+=40){
@@ -30,7 +30,7 @@ assert.throws(()=>sensorTracks({schema:'blink-display/v1'}),/研究 JSON/);
 const tr=sensorTracks({schema:'blink-export/v1',metadata:{id:'a',participant_id:'5',first_timeline_ms:105,last_timeline_ms:120,
   detector:{calibrated_timeline_ms:100},config:{sampleRateHz:200}},
   sample_chunks:[{index:0,rows:[[105,1,1,2000,2000,1,0],[110,6,6,2000,2000,1,2],[115,11,11,2000,2000,1,0],[120,16,16,2000,2000,1,0]]}],events:[]});
-assert.deepEqual(tr.coverage,[{from:0,to:0},{from:10,to:15}]);
+assert.deepEqual(tr.coverage,[{from:0,to:0,segment:1},{from:10,to:15,segment:1}]);
 assert.equal(beijingTimestamp('2026-11-13T11:30:25.123'),Date.parse('2026-11-13T03:30:25.123Z'));
 assert(Number.isNaN(beijingTimestamp('2026-02-30T11:30')));
 const timed={first_utc_ms:Date.parse('2026-11-13T03:30:25Z'),coverage:[{from:3000,to:300000}]};
@@ -39,6 +39,13 @@ assert.deepEqual(videoAlignment(timed,'2026-11-13T11:30:40',5,120),
 assert.deepEqual(videoAlignment(timed,'2026-11-13T11:30:10',0,100),
   {start:Date.parse('2026-11-13T03:30:10Z'),offset:15000,from:18,to:100});
 assert.throws(()=>videoAlignment(timed,'2026-11-12T11:30:10',0,100),/没有重叠/);
+const withCues={...timed,coverage:[{from:3000,to:250000,segment:1},{from:251000,to:300000,segment:2}],cues:[{ms:10000,segment:1},{ms:210000,segment:1}]};
+const two=cueAlignment(withCues,12010,212210,320);
+assert.equal(two.scale,1.001);
+assert(Math.abs(two.offset-2000)<1e-8);
+assert(Math.abs(two.to-252.25)<1e-8,'only apply a cue fit to its continuous capture segment');
+assert.equal(compare({...withCues,events:[{ms:200000}]},{coverage:[{from:0,to:320000}],events:[{ms:202200}]},two.offset,50,two.scale).matched.length,1);
+assert.throws(()=>cueAlignment({...withCues,cues:[withCues.cues[0],{ms:210000,segment:2}]},12010,212210,320),/同一连续采集段/);
 const irregular=Array.from({length:90},(_,i)=>1800+i*2300+(i*i*87)%1200);
 const track={first_utc_ms:Date.parse('2026-11-13T03:30:25.495Z'),events:irregular.map(ms=>({ms})),coverage:[{from:0,to:215000}]};
 const shifted={events:irregular.map(ms=>({ms:ms+2110})),coverage:[{from:0,to:220000}]};

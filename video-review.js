@@ -29,6 +29,19 @@
     if(!intervals.length)throw Error('视频和正式采集没有重叠，请核对日期、北京时间和对应帧。');
     return {start,offset,from:intervals[0].from/1000,to:intervals.at(-1).to/1000};
   }
+  function cueAlignment(sensor, firstVideoMs, lastVideoMs, videoDuration, from=0, to=videoDuration){
+    const first=sensor.cues?.[0],last=sensor.cues?.at(-1);
+    if(!first||!last||first.segment!==last.segment||last.ms-first.ms<10000||!Number.isFinite(firstVideoMs)||!Number.isFinite(lastVideoMs)||
+      firstVideoMs<0||lastVideoMs>videoDuration*1000||lastVideoMs<=firstVideoMs||!(from>=0&&to>from&&to<=videoDuration))
+      throw Error('请选择同一连续采集段内、相隔至少 10 秒的两次同步闪光。');
+    const scale=(lastVideoMs-firstVideoMs)/(last.ms-first.ms);
+    if(Math.abs(scale-1)>.02)throw Error('两个锚点推算的时钟速率相差超过 2%，请检查是否选对闪光。');
+    const offset=firstVideoMs-first.ms*scale;
+    const intervals=sensor.coverage.filter(r=>first.segment===undefined||r.segment===first.segment)
+      .map(r=>({from:Math.max(from*1000,r.from*scale+offset),to:Math.min(to*1000,r.to*scale+offset)})).filter(r=>r.to>r.from);
+    if(!intervals.length)throw Error('同步后的录像和采集没有重叠。');
+    return {offset,scale,segment:first.segment,from:intervals[0].from/1000,to:intervals.at(-1).to/1000};
+  }
   function videoEvents(frames,ratio=.70){
     const events=[],coverage=[],history=[];
     let closed=null,lastOpen=null,prev=null,last=-Infinity,run=null;
@@ -103,16 +116,16 @@
   }
 
   // Only compare events within the same shared interval.
-  function compare(sensor, video, offset, tolerance=200){
+  function compare(sensor, video, offset, tolerance=200, scale=1){
     const overlap=[];
     for(const a of sensor.coverage)for(const b of video.coverage){
-      const from=Math.max(a.from+offset,b.from),to=Math.min(a.to+offset,b.to);
+      const from=Math.max(a.from*scale+offset,b.from),to=Math.min(a.to*scale+offset,b.to);
       if(to>from)overlap.push({from,to});
     }
     overlap.sort((a,b)=>a.from-b.from);
     const interval=t=>overlap.findIndex(r=>t>=r.from&&t<=r.to);
     const covered=t=>interval(t)>=0;
-    const s=sensor.events.map(e=>({...e,video_ms:e.ms+offset})).filter(e=>covered(e.video_ms)).sort((a,b)=>a.video_ms-b.video_ms);
+    const s=sensor.events.map(e=>({...e,video_ms:e.ms*scale+offset})).filter(e=>covered(e.video_ms)).sort((a,b)=>a.video_ms-b.video_ms);
     const v=video.events.filter(e=>covered(e.ms)).sort((a,b)=>a.ms-b.ms);
     const matched=[],sensor_only=[],video_only=[];
     let i=0,j=0;
@@ -152,29 +165,34 @@
       }
       if(!Number.isFinite(t)||t<=formal||(row[6]&14)){run=null;previous=null;continue;}
       if(!run||previous[5]!==row[5]||t-previous[0]>dt*1.6||t<=previous[0]){
-        run={from:t-t0,to:t-t0};coverage.push(run);
+        run={from:t-t0,to:t-t0,segment:row[5]};
+        coverage.push(run);
       }
       run.to=t-t0;previous=row;
     }
     const events=original.events.filter(e=>e.type==='blink'&&Number.isFinite(e.timeline_ms))
       .map(e=>({ms:e.timeline_ms-t0,source:'original'}));
+    const cues=original.events.filter(e=>e.type==='video_sync_cue'&&Number.isFinite(e.cue_timeline_ms)&&
+      e.cue_timeline_ms>=t0&&e.cue_timeline_ms<=m.last_timeline_ms+160&&Number.isFinite(e.ordinal))
+      .map(e=>({ms:e.cue_timeline_ms-t0,ordinal:e.ordinal,segment:e.segment_id})).sort((a,b)=>a.ms-b.ms);
     const reanalysis=Array.isArray(input?.reanalysis?.events)?input.reanalysis.events.filter(e=>Number.isFinite(e.t))
       .map(e=>({ms:e.t-t0,source:e.source==='isolated-review'?'isolated-review':'adaptive'})):null;
     if(firstUtc===null||!coverage.some(r=>r.to>r.from))throw Error('没有足够的正式采样用于时间对照。');
-    return {subject:String(m.participant_id||'未编号'),record_id:String(m.id),first_utc_ms:firstUtc,coverage,events,reanalysis};
+    return {subject:String(m.participant_id||'未编号'),record_id:String(m.id),first_utc_ms:firstUtc,coverage,events,reanalysis,cues};
   }
-  if(typeof module==='object'&&module.exports)module.exports={frameEar,videoEvents,compare,sensorTracks,beijingTimestamp,videoAlignment};
+  if(typeof module==='object'&&module.exports)module.exports={frameEar,videoEvents,compare,sensorTracks,beijingTimestamp,videoAlignment,cueAlignment};
   if(!root.document)return;
   const $=id=>root.document.getElementById(id),media=$('reviewMedia'),status=$('reviewStatus');
   if(!media)return;
   let url=null,video=null,sensor=null,report=null,busy=false,token=0,loadId=0;
   const message=t=>{status.textContent=t;};
   const clearReport=()=>{report=null;$('reviewSave').disabled=true;$('reviewResults').replaceChildren();};
-  const setBusy=v=>{busy=v;for(const id of ['reviewVideo','reviewData','reviewScan','reviewFrom','reviewTo','reviewRatio','reviewStartTime','reviewAnchor','reviewUseTime'])$(id).disabled=v;$('reviewCancel').disabled=!v;};
+  const setBusy=v=>{busy=v;for(const id of ['reviewVideo','reviewData','reviewScan','reviewFrom','reviewTo','reviewRatio','reviewStartTime','reviewAnchor','reviewUseTime','reviewCueFirst','reviewCueLast','reviewSetFirst','reviewSetLast'])$(id).disabled=v;$('reviewCancel').disabled=!v;};
   $('reviewVideo').onchange=()=>{
     const file=$('reviewVideo').files[0];if(!file)return;
     clearReport();video=null;if(url)URL.revokeObjectURL(url);
     $('reviewStartTime').value='';$('reviewAnchor').value='0';$('reviewFrom').value='';$('reviewTo').value='';
+    $('reviewCueFirst').value='';$('reviewCueLast').value='';
     url=URL.createObjectURL(file);media.src=url;
     message('正在读取本地视频…');
   };
@@ -182,11 +200,15 @@
   media.onerror=()=>message('浏览器无法解码此视频。可在本机转成 H.264 MP4 后重试。');
   $('reviewData').onchange=async()=>{
     const f=$('reviewData').files[0],id=++loadId;if(!f)return;
-    sensor=null;clearReport();
+    sensor=null;clearReport();$('reviewCues').hidden=true;$('reviewCueFirst').value='';$('reviewCueLast').value='';
     try{if(f.size>32*1024*1024)throw Error('请用逐条文件（最多32 MiB）。');
       const next=sensorTracks(JSON.parse(await f.text()));if(id!==loadId)return;
       sensor=next;message('已载入受试者 '+sensor.subject+'。采集首样本：'+
         new Date(sensor.first_utc_ms+28800000).toISOString().replace('T',' ').replace('Z','')+' 北京时间。');
+      if(sensor.cues.length>=2){
+        $('reviewCues').hidden=false;
+        $('reviewCueText').textContent=`选择视频中同步 ${sensor.cues[0].ordinal} 和同步 ${sensor.cues.at(-1).ordinal} 开始发亮的位置。`;
+      }
     }catch(e){if(id===loadId)message(e.message);}
   };
   function seek(seconds){
@@ -207,8 +229,12 @@
     let alignment;
     try{
       const end=$('reviewTo').value.trim();
-      alignment=videoAlignment(sensor,$('reviewStartTime').value,Number($('reviewAnchor').value),media.duration,
-        Number($('reviewFrom').value),end===''?media.duration:Number(end));
+      const from=Number($('reviewFrom').value),to=end===''?media.duration:Number(end);
+      const first=$('reviewCueFirst').value.trim(),last=$('reviewCueLast').value.trim();
+      if(!$('reviewCues').hidden&&(first!==''||last!=='')){
+        if(first===''||last==='')throw Error('请填写两次同步闪光对应的视频位置。');
+        alignment=cueAlignment(sensor,Number(first)*1000,Number(last)*1000,media.duration,from,to);
+      }else alignment=videoAlignment(sensor,$('reviewStartTime').value,Number($('reviewAnchor').value),media.duration,from,to);
       if(alignment.to-alignment.from>900||!(ratio>=.4&&ratio<=.9))throw Error('单段最多分析15分钟；闭眼比例应为0.4～0.9。');
     }catch(e){message(e.message);return;}
     const {from,to}=alignment;
@@ -234,14 +260,18 @@
   };
   $('reviewCancel').onclick=()=>{token++;message('正在停止，等待当前帧完成…');};
   $('reviewUseTime').onclick=()=>{$('reviewAnchor').value=media.currentTime.toFixed(3);clearReport();};
-  for(const id of ['reviewStartTime','reviewAnchor','reviewFrom','reviewTo','reviewRatio'])$(id).oninput=clearReport;
+  $('reviewSetFirst').onclick=()=>{$('reviewCueFirst').value=media.currentTime.toFixed(3);clearReport();};
+  $('reviewSetLast').onclick=()=>{$('reviewCueLast').value=media.currentTime.toFixed(3);clearReport();};
+  for(const id of ['reviewStartTime','reviewAnchor','reviewFrom','reviewTo','reviewRatio','reviewCueFirst','reviewCueLast'])$(id).oninput=clearReport;
   function renderComparison(alignment,usableFrames,totalFrames){
-    const {offset,start}=alignment;
-    const original=compare(sensor,video,offset);
+    const {offset,start,scale=1,segment}=alignment;
+    const track=segment===undefined?sensor:{...sensor,coverage:sensor.coverage.filter(r=>r.segment===segment)};
+    const original=compare(track,video,offset,200,scale);
     if(!original.overlap.length){message('没有双方同时可用的时段，请检查视频区间和对齐值。');return;}
-    const adaptive=sensor.reanalysis?compare({...sensor,events:sensor.reanalysis},video,offset):null;
+    const adaptive=sensor.reanalysis?compare({...track,events:sensor.reanalysis},video,offset,200,scale):null;
     report={schema:'blink-video-comparison/v1',subject:sensor.subject,record_id:sensor.record_id,
-      sensor_first_utc_ms:sensor.first_utc_ms,video_start_utc_ms:start,alignment_video_at_first_sample_ms:offset,tolerance_ms:200,
+      sensor_first_utc_ms:sensor.first_utc_ms,video_start_utc_ms:start,alignment_video_at_first_sample_ms:offset,video_time_scale:scale,
+      alignment_segment:segment,tolerance_ms:200,
       video,original,adaptive,note:'视频及传感器事件均为候选，不等于人工真值。仅比较双方有观察的重叠时段。'};
     const box=$('reviewResults');
     const sec=n=>(n/1000).toFixed(3)+' 秒';
@@ -261,7 +291,8 @@
       box.append(details);
     }
     const seconds=original.overlap.reduce((n,r)=>n+r.to-r.from,0)/1000;
-    message('受试者 '+sensor.subject+' · 可比 '+seconds.toFixed(1)+' 秒 · 可用帧 '+usableFrames+'/'+totalFrames+' · 匹配容差 ±200 ms。');
+    message('受试者 '+sensor.subject+' · 可比 '+seconds.toFixed(1)+' 秒 · 可用帧 '+usableFrames+'/'+totalFrames+
+      (alignment.scale===undefined?'':` · 双锚点对时，每分钟偏移 ${((scale-1)*60000).toFixed(1)} ms`)+ ' · 匹配容差 ±200 ms。');
     $('reviewSave').disabled=false;
   }
   $('reviewSave').onclick=()=>{

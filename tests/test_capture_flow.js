@@ -8,6 +8,10 @@ async function capture(e,planC=false){
   const t=1000+i*5,phase=(t-5000)%1500;
   const raw=t>=5000&&phase>=0&&phase<200?2048-Math.round(40*Math.sin(Math.PI*phase/200)):2048+(i%3-1);
   a.onSample(t,raw);
+  if(!planC&&i===1000){
+   e.w.document.getElementById('btnVideoSync').click();
+   await e.clock.tickAsync(520);
+  }
  }
  await a.stopSession('user');await a.S.writeChain;
  return await a.buildBundle(JSON.parse(JSON.stringify(a.S.session)));
@@ -21,6 +25,10 @@ async function capture(e,planC=false){
    assert.equal(b.metadata.detector.drop_counts,8);
    assert.equal(b.sample_chunks.reduce((n,c)=>n+c.rows.length,0),2601);
    assert.equal(a.S.count,6);
+   const cue=b.events.find(event=>event.type==='video_sync_cue');
+   assert.equal(cue.ordinal,1);
+   assert.equal(cue.segment_id,1);
+   assert(cue.cue_timeline_ms>=cue.timeline_ms&&cue.cue_timeline_ms-cue.timeline_ms<=20);
    const replay=a.makeOfflineDetector(b.metadata.config,b.metadata.detector.drop_counts);
    const events=b.sample_chunks.flatMap(c=>c.rows).map(replay).filter(Boolean);
    assert.equal(events.length,a.S.count,`${page} live/offline`);
@@ -30,6 +38,11 @@ async function capture(e,planC=false){
    a.ui.sessionList.value=b.metadata.id;await a.exportSelectedSession();
    assert.equal(e.downloads.length,2);
    await a.exportAllSessions();assert.equal(JSON.parse(await e.downloads[2].text()).session_count,1);
+   a.S.session.reanalysis={algorithm:'replay-video-calibrated/v1',config:{...b.metadata.config,manualThresholdEnabled:false},
+     drop_counts:8,events:[]};
+   await a.analyze();
+   assert.equal(a.ui.sCount.textContent,'0 次','frequency analysis follows the calibrated track');
+   assert.equal(a.ui.sDur.textContent,'10.0 秒有效采集','frequency denominator excludes preparation');
    assert.equal(e.errors.length,0,e.errors.join('\n'));
   }finally{e.close();}
   const e2=loadPage(page);

@@ -177,9 +177,9 @@ function adjudicate(previous,frames,track,bundle,app,video){
 }
 
 function main(){
-  const [research,videoDir,out]=process.argv.slice(2);
-  if(!out)throw Error('用法：node tools/deep-video-review.js 原研究目录 视频目录 复核目录');
-  const previous=read(path.join(out,'双端标定结果.json'));
+  const [research,videoDir,out,inputFile,outputFile]=process.argv.slice(2);
+  if(!out)throw Error('用法：node tools/deep-video-review.js 原研究目录 视频目录 复核目录 [双端标定结果.json] [深度标定结果.json]');
+  const previous=read(inputFile??path.join(out,'双端标定结果.json'));
   const expected=new Set(read(path.join(out,'深度复核任务.json')).map(job=>job.subject));
   const alternateJobs=path.join(out,'辅助录像任务.json');
   const alternatives=fs.existsSync(alternateJobs)?read(alternateJobs):[];
@@ -191,7 +191,7 @@ function main(){
   }));
   const rows=new Map(read(path.join(research,'记录索引.json')).records.map(r=>[r.subject,r]));
   const app=loadPage('test.html');
-  const target=path.join(out,'深度标定结果.json');
+  const target=outputFile??path.join(out,'深度标定结果.json');
   const results=[];
   try{
     for(const prior of previous.results){
