@@ -53,28 +53,79 @@
     }
     return {events,coverage:coverage.filter(r=>r.to>r.from)};
   }
-  // Monotone one-to-one matching. Compare only within shared, observed time.
+  // Maximize the number of ordered pairs, then minimize total timestamp error.
+  // In a crowded interval a first-in-range match can pick the wrong blink.
+  function pairBlock(sensor, video, tolerance) {
+    const stride=video.length+1;
+    const size=(sensor.length+1)*stride;
+    const count=new Uint32Array(size), error=new Float64Array(size), action=new Uint8Array(size);
+    for(let i=sensor.length-1;i>=0;i--)for(let j=video.length-1;j>=0;j--){
+      const here=i*stride+j, skipSensor=here+stride, skipVideo=here+1, next=skipSensor+1;
+      const better=(n,e)=>n>count[here]||(n===count[here]&&e<error[here]);
+      count[here]=count[skipSensor];error[here]=error[skipSensor];action[here]=1;
+      if(better(count[skipVideo],error[skipVideo])){
+        count[here]=count[skipVideo];error[here]=error[skipVideo];action[here]=2;
+      }
+      const delta=Math.abs(sensor[i].video_ms-video[j].ms);
+      if(delta<=tolerance&&better(count[next]+1,error[next]+delta)){
+        count[here]=count[next]+1;error[here]=error[next]+delta;action[here]=3;
+      }
+    }
+    const matched=[],sensor_only=[],video_only=[];
+    let i=0,j=0;
+    while(i<sensor.length&&j<video.length){
+      const choice=action[i*stride+j];
+      if(choice===1)sensor_only.push(sensor[i++]);
+      else if(choice===2)video_only.push(video[j++]);
+      else{
+        const s=sensor[i++],v=video[j++];
+        matched.push({sensor:s,video:v,delta_ms:s.video_ms-v.ms});
+      }
+    }
+    return {matched,sensor_only:sensor_only.concat(sensor.slice(i)),video_only:video_only.concat(video.slice(j))};
+  }
+
+  function pairEvents(sensor, video, tolerance){
+    const entries=[...sensor.map(e=>({e,ms:e.video_ms,side:0})),...video.map(e=>({e,ms:e.ms,side:1}))].sort((a,b)=>a.ms-b.ms);
+    const result={matched:[],sensor_only:[],video_only:[]};
+    let groups=[[],[]],previous=-Infinity;
+    const flush=()=>{
+      const block=pairBlock(...groups,tolerance);
+      for(const key of Object.keys(result))result[key].push(...block[key]);
+      groups=[[],[]];
+    };
+    for(const {e,ms,side} of entries){
+      if(ms-previous>tolerance)flush();
+      groups[side].push(e);previous=ms;
+    }
+    flush();
+    return result;
+  }
+
+  // Only compare events within the same shared interval.
   function compare(sensor, video, offset, tolerance=200){
     const overlap=[];
     for(const a of sensor.coverage)for(const b of video.coverage){
       const from=Math.max(a.from+offset,b.from),to=Math.min(a.to+offset,b.to);
       if(to>from)overlap.push({from,to});
     }
+    overlap.sort((a,b)=>a.from-b.from);
     const interval=t=>overlap.findIndex(r=>t>=r.from&&t<=r.to);
     const covered=t=>interval(t)>=0;
     const s=sensor.events.map(e=>({...e,video_ms:e.ms+offset})).filter(e=>covered(e.video_ms)).sort((a,b)=>a.video_ms-b.video_ms);
     const v=video.events.filter(e=>covered(e.ms)).sort((a,b)=>a.ms-b.ms);
-    let i=0,j=0;const matches=[],sensorOnly=[],videoOnly=[];
-    while(i<s.length&&j<v.length){
-      const delta=s[i].video_ms-v[j].ms;
-      if(delta< -tolerance)sensorOnly.push(s[i++]);
-      else if(delta>tolerance)videoOnly.push(v[j++]);
-      else if(interval(s[i].video_ms)!==interval(v[j].ms)){
-        if(delta<0)sensorOnly.push(s[i++]);else videoOnly.push(v[j++]);
-      }else matches.push({sensor:s[i++],video:v[j++],delta_ms:delta});
+    const matched=[],sensor_only=[],video_only=[];
+    let i=0,j=0;
+    for(const r of overlap){
+      const startI=i,startJ=j;
+      while(i<s.length&&s[i].video_ms<=r.to)i++;
+      while(j<v.length&&v[j].ms<=r.to)j++;
+      const group=pairEvents(s.slice(startI,i),v.slice(startJ,j),tolerance);
+      matched.push(...group.matched);
+      sensor_only.push(...group.sensor_only);
+      video_only.push(...group.video_only);
     }
-    return {overlap,matched:matches,sensor_only:sensorOnly.concat(s.slice(i)),video_only:videoOnly.concat(v.slice(j)),
-      sensor_outside:sensor.events.length-s.length,video_outside:video.events.length-v.length};
+    return {overlap,matched,sensor_only,video_only,sensor_outside:sensor.events.length-s.length,video_outside:video.events.length-v.length};
   }
   function sensorTracks(input){
     const original=input?.schema==='blink-analysis/v1'?input.original:input;

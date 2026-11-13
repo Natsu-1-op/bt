@@ -16,6 +16,7 @@
   <section><h2>现场视频</h2><video id="video" preload="metadata" playsinline controls></video>
     <div class="row"><button id="segment">播放差异片段</button><label>播放速度 <select id="speed"><option value="1">正常</option><option value="0.5">0.5 倍</option><option value="0.25">0.25 倍</option></select></label><label class="file" for="file">手动打开本地视频</label><input id="file" type="file" accept="video/*,.mp4,.mov"></div>
     <p id="videoStatus" class="muted"></p>
+    <div id="eyeEvidence" hidden><p class="muted">MediaPipe 眨眼分数 · 左眼蓝色 · 右眼橙色</p><canvas id="eyes" aria-label="左右眼眨眼分数" style="width:100%;height:66px;background:#0b1625;border-radius:6px"></canvas></div>
     <details><summary>手动对时</summary><p class="muted">暂停视频，用右侧进度条选中对应的波形位置，再点「对齐当前位置」。</p><div class="row"><button id="align">对齐当前位置</button><button id="resetAlign">恢复自动对时</button><button id="exportAlign">保存对时修正</button></div></details>
   </section>
   <section><h2>传感器波形 · ADC 计数</h2><canvas class="wave" id="wave" aria-label="传感器波形，点击可定位"></canvas>
@@ -27,7 +28,7 @@
 <section class="nav">
   <h2>待核对差异</h2>
   <div class="row"><select id="filter" aria-label="差异类型"><option value="">全部差异</option><option>仅视频</option><option>仅传感器</option><option>视频闭眼明显</option><option>试算有响应</option><option>试算新增仅传感器</option><option>尚未标记</option></select>
-    <button id="prev" aria-label="上一处">上一处</button><select class="diff" id="diff" aria-label="差异位置"></select><button id="next" aria-label="下一处">下一处</button></div>
+    <button id="prev" aria-label="上一处">上一处</button><select class="diff" id="diff" aria-label="差异位置"></select><button id="next" aria-label="下一处">下一处</button><button id="nextUnmarked">下一处未标记</button></div>
   <div class="actions" id="decisions"><button data-label="是眨眼">是眨眼</button><button data-label="非眨眼">非眨眼</button><button data-label="看不清">看不清</button><button data-label="">清除标记</button></div>
   <p id="hint" class="muted" role="status"></p>
 </section>
@@ -35,6 +36,7 @@
 <script>
 const $=id=>document.getElementById(id);
 const cases=JSON.parse($('cases').textContent), video=$('video'), canvas=$('wave'), ctx=canvas.getContext('2d');
+const eyeCanvas=$('eyes'), eyeContext=eyeCanvas.getContext('2d');
 const key='blink-local-video-review-v1';
 const alignKey=key+'-alignments';
 function readSaved(name) {try{return JSON.parse(localStorage.getItem(name)||'{}')||{};}catch{return {};}}
@@ -42,7 +44,7 @@ let marks=readSaved(key),alignments=readSaved(alignKey);
 let row, list=[], selected=-1, position=0, center=0, clipEnd=null, blob=null, pendingSeek=null, offset=null, manualAlign=false;
 const second=ms=>(ms/1000).toFixed(3);
 const fmt=new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',dateStyle:'short',timeStyle:'medium',hourCycle:'h23'});
-const markKey=d=>`${row.id}:${row.videoFile}:${d.video}:${d.type}`;
+const markKey=(d,record=row)=>`${record.id}:${record.videoFile}:${d.video}:${d.type}`;
 const clamp=(v,lo,hi)=>Math.min(hi,Math.max(lo,v));
 const hasOffset=()=>Number.isFinite(offset);
 const option=(label,value)=>new Option(label,String(value));
@@ -76,7 +78,8 @@ function selectSubject() {
 function updateSummary() {
   $('summary').textContent=`${row.subject}号 · ${row.status}${row.reason?' · '+row.reason:''}${hasOffset()?' · '+(manualAlign?'手动对时 ':row.aligned?'首样本对应视频 ':'试对时 ')+second(offset)+' 秒':''}`;
   if(manualAlign)$('summary').textContent+=' · 差异清单来自上次批处理';
-  if(row.automatic){const a=row.automatic;$('summary').textContent+=` · 自动补回 ${a.added} · 排除 ${a.removed} · 确认保留 ${a.confirmed} · 确认仅视频 ${a.videoOnly}`;}
+  if(Number.isFinite(row.alignedCoverage))$('summary').textContent+=` · 双方覆盖 ${(row.alignedCoverage/1000).toFixed(1)} 秒`;
+  if(row.automatic){const a=row.automatic;$('summary').textContent+=` · 自动补回 ${a.added} · 排除 ${a.removed} · 确认保留 ${a.confirmed} · 确认仅视频 ${a.videoOnly}`;if(a.reviewed)$('summary').textContent+=` · 已逐帧复查 ${a.reviewed} 处`}
   if(row.trial){const t=row.trial;$('summary').textContent+=` · 试算补回 ${t.recovered.length} 处，剩余仅视频 ${t.videoOnly} / 仅传感器 ${t.sensorOnly}${t.suggested?' · 可优先核对':''}`;}
 }
 const sensorAt=d=>manualAlign&&d.type==='仅视频'?d.video-offset:d.sensor;
@@ -85,7 +88,7 @@ function refreshList(retain=null) {
   const filter=$('filter').value;
   const filters={
     '尚未标记':d=>!marks[markKey(d)],
-    '视频闭眼明显':d=>d.reason?.startsWith('视频闭眼明显'),
+    '视频闭眼明显':d=>d.priority||d.reason?.startsWith('视频闭眼明显'),
     '试算有响应':d=>d.type==='仅视频'&&row.trial?.recovered.includes(d.video),
   };
   list=filter==='试算新增仅传感器'?(row.trial?.newSensorOnly??[]):
@@ -106,6 +109,7 @@ function selectDiff(index, move=true) {
   }
   $('hint').textContent=d?`视频 ${second(videoAt(d))} 秒 · 传感器 ${second(sensorAt(d))} 秒${d.reason?' · '+d.reason:''}。点击片段可从差异前 1 秒播放。`:'可用进度条查看整条波形。';
   if(d&&move)jump(sensorAt(d));
+  else drawEyes();
 }
 function seekVideo(ms) {
   pendingSeek=ms;
@@ -153,6 +157,30 @@ function draw() {
   ctx.stroke();line(position,'#fff');ctx.restore();
   $('seek').value=Math.round(position);
   $('time').textContent=`传感器 ${second(position)} 秒 · ${fmt.format(row.utc+position)} 北京时间${hasOffset()?' · 视频 '+second(position+offset)+' 秒':''}`;
+  drawEyes();
+}
+function drawEyes(){
+  const d=list[selected], samples=d?.eye_scores;
+  $('eyeEvidence').hidden=!samples?.length;
+  if(!samples?.length)return;
+  const width=eyeCanvas.clientWidth,height=eyeCanvas.clientHeight,ratio=Math.min(devicePixelRatio||1,2);
+  if(!width||!height)return;
+  if(eyeCanvas.width!==Math.round(width*ratio)||eyeCanvas.height!==Math.round(height*ratio)){
+    eyeCanvas.width=Math.round(width*ratio);eyeCanvas.height=Math.round(height*ratio);
+  }
+  const x=t=>8+(t-d.video+700)*(width-16)/1400;
+  eyeContext.setTransform(ratio,0,0,ratio,0,0);eyeContext.clearRect(0,0,width,height);
+  eyeContext.strokeStyle='#384b61';eyeContext.beginPath();eyeContext.moveTo(x(d.video),0);eyeContext.lineTo(x(d.video),height);eyeContext.stroke();
+  for(const [column,color] of [[1,'#67c7fb'],[2,'#f0a357']]){
+    eyeContext.strokeStyle=color;eyeContext.beginPath();let previous=null;
+    for(const frame of samples){
+      if(frame[column]===null){previous=null;continue;}
+      const y=height-5-frame[column]*(height-10);
+      if(previous!==null&&frame[0]-previous<=70)eyeContext.lineTo(x(frame[0]),y);else eyeContext.moveTo(x(frame[0]),y);
+      previous=frame[0];
+    }
+    eyeContext.stroke();
+  }
 }
 function sync(videoSeconds=video.currentTime) {
   if(!hasOffset()||video.seeking||$('align').closest('details').open)return;
@@ -181,6 +209,21 @@ $('speed').onchange=()=>{video.playbackRate=Number($('speed').value);};
 $('subject').onchange=selectSubject;$('filter').onchange=()=>refreshList();
 $('diff').onchange=()=>selectDiff(Number($('diff').value));
 $('prev').onclick=()=>selectDiff(selected-1);$('next').onclick=()=>selectDiff(selected+1);
+$('nextUnmarked').onclick=()=>{
+  const current=Number($('subject').value), at=list[selected]?.video??-Infinity;
+  const ordered=cases.slice(current+1).concat(cases.slice(0,current));
+  let target=row, difference=row.differences.find(d=>d.video>at&&!marks[markKey(d,row)]);
+  if(!difference){
+    for(const other of [...ordered,row]){
+      difference=other.differences.find(d=>!marks[markKey(d,other)]);
+      if(difference){target=other;break;}
+    }
+  }
+  if(!difference){$('hint').textContent='所有差异都已标记。';return;}
+  $('filter').value='尚未标记';
+  if(target!==row){$('subject').value=String(cases.indexOf(target));selectSubject();}
+  refreshList(difference);
+};
 $('seek').oninput=()=>jump(Number($('seek').value),!$('align').closest('details').open);$('zoom').onchange=draw;$('trial').onchange=draw;
 canvas.onclick=e=>{const bounds=canvas.getBoundingClientRect(),span=Number($('zoom').value);jump(Math.max(0,center-span/2)+(e.clientX-bounds.left-45)*span/(bounds.width-57),!$('align').closest('details').open);};
 $('align').onclick=()=>{

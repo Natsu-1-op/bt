@@ -31,7 +31,9 @@ function sync(source,fitFile,stage,extraFile){
       assert.equal(view?.subject,row.subject);
       const calibration={status:fit.status,reason:fit.reason,alignment:fit.alignment,video_file:fit.video_file,
         matched:fit.matched,overlap_ms:fit.overlap_ms,historical_outside_overlap:fit.historical_outside_overlap,
-        accepted:fit.accepted,rejected:fit.rejected,confirmed:fit.confirmed,video_only_confirmed:fit.video_only_confirmed,remaining:fit.differences};
+        accepted:fit.accepted,rejected:fit.rejected,confirmed:fit.confirmed,video_only_confirmed:fit.video_only_confirmed,
+        remaining:fit.differences,deep_review:fit.deep_review,deep_alignment:fit.deep_alignment,
+        alternate_video:fit.alternate_video};
       if(fit.calibrated_events){
         input.previous_reanalysis=input.reanalysis;
         input.reanalysis={...input.reanalysis,algorithm:'replay-video-calibrated/v1',calibration_policy:'video-and-sensor-evidence',

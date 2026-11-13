@@ -87,4 +87,4 @@ function main(){
 }
 
 if(require.main===module){try{main();}catch(e){console.error(e);process.exitCode=1;}}
-module.exports={write};
+module.exports={write,trialEvents};

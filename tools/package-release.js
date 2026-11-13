@@ -26,7 +26,7 @@ copy('AI-SYNC',skipEvidence);
 for(const rel of ['tools/run-page.js','tools/test-all.js','tools/package-release.js','tools/serve-page.js',
   'tools/review-video-batch.js','tools/mediapipe-video.py','tools/export-review-delivery.js',
   'tools/calibrate-video-delivery.js','tools/fit-video-review.js','tools/sync-calibrated-delivery.js',
-  'tools/build-video-review.js','tools/video-review-workbench.html'])copy(rel);
+  'tools/build-video-review.js','tools/video-review-workbench.html','tools/deep-video-review.js','tools/review-eye-evidence.py'])copy(rel);
 function assertNoRules(dir){
   for(const e of fs.readdirSync(dir,{withFileTypes:true})){
     if(e.name==='database.rules.json')throw new Error('Rules file must not be present in delivery folder: '+path.join(dir,e.name));

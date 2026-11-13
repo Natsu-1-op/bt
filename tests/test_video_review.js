@@ -21,6 +21,10 @@ assert.equal(res.video_only.length,0);
 const split=compare({coverage:[{from:0,to:100},{from:120,to:200}],events:[{ms:95}]},
   {coverage:[{from:0,to:200}],events:[{ms:130}]},0,100);
 assert.equal(split.matched.length,0,'do not match across a missing segment');
+const crowded=compare({coverage:[{from:0,to:2000}],events:[{ms:800},{ms:975}]},
+  {coverage:[{from:0,to:2000}],events:[{ms:990}]},0,200);
+assert.equal(crowded.matched[0].sensor.ms,975,'prefer the nearer blink when the number of pairs is unchanged');
+assert.equal(crowded.sensor_only[0].ms,800);
 assert.equal(frameEar(null,640,480),null);
 assert.throws(()=>sensorTracks({schema:'blink-display/v1'}),/研究 JSON/);
 const tr=sensorTracks({schema:'blink-export/v1',metadata:{id:'a',participant_id:'5',first_timeline_ms:105,last_timeline_ms:120,
