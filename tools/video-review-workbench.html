@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>眨眼视频与波形复核</title>
+<style>
+:root{color-scheme:dark;background:#0a1422;color:#e9f2fc;font:16px system-ui,sans-serif}
+*{box-sizing:border-box}body{max-width:1480px;margin:auto;padding:20px}h1{font-size:1.55rem;margin:0 0 16px}h2{font-size:1rem;margin:0 0 8px}p{color:#aec2da;line-height:1.45;margin:8px 0}section{background:#112035;border:1px solid #29425e;border-radius:12px;padding:14px;min-width:0}
+.row{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:10px 0}.pair{display:grid;grid-template-columns:minmax(280px,1fr) minmax(360px,1.5fr);gap:12px}.toolbar{justify-content:space-between}.nav{margin-top:12px}.wave{width:100%;height:clamp(250px,40vh,470px);display:block;background:#0b1625;border-radius:8px;cursor:crosshair}video{width:100%;height:clamp(250px,40vh,470px);background:#05090f;display:block;border-radius:8px}button,input,select{font:inherit;color:inherit}button,select,.file{border:1px solid #456888;border-radius:7px;background:#1a3049;padding:7px 10px}button:disabled{opacity:.45}button[aria-pressed=true]{background:#23617b}#seek{width:100%;accent-color:#75c9f4}.video-key{color:#67c7fb}.sensor-key{color:#ffd46c}.trial-key{color:#f8a4fa}.muted{font-size:.88rem;color:#aec2da}.actions{display:flex;gap:7px;flex-wrap:wrap}#file{display:none}.diff{width:min(100%,24rem)}@media(max-width:760px){body{padding:12px}.pair{grid-template-columns:1fr}.wave,video{height:270px}}
+</style>
+<body>
+<h1>眨眼视频与波形复核</h1>
+<div class="row toolbar"><label>受试者 <select id="subject"></select></label><button id="export">保存复核标记</button></div>
+<p id="summary" role="status"></p>
+<div class="pair">
+  <section><h2>现场视频</h2><video id="video" preload="metadata" playsinline controls></video>
+    <div class="row"><button id="segment">播放差异片段</button><label>播放速度 <select id="speed"><option value="1">正常</option><option value="0.5">0.5 倍</option><option value="0.25">0.25 倍</option></select></label><label class="file" for="file">手动打开本地视频</label><input id="file" type="file" accept="video/*,.mp4,.mov"></div>
+    <p id="videoStatus" class="muted"></p>
+    <details><summary>手动对时</summary><p class="muted">暂停视频，用右侧进度条选中对应的波形位置，再点「对齐当前位置」。</p><div class="row"><button id="align">对齐当前位置</button><button id="resetAlign">恢复自动对时</button><button id="exportAlign">保存对时修正</button></div></details>
+  </section>
+  <section><h2>传感器波形 · ADC 计数</h2><canvas class="wave" id="wave" aria-label="传感器波形，点击可定位"></canvas>
+    <input id="seek" type="range" min="0" step="1" aria-label="传感器时间">
+    <div class="row"><span class="video-key">视频差异</span><span class="sensor-key">传感器事件</span><span class="trial-key">标定试算</span><label><input id="trial" type="checkbox"> 显示标定试算</label><label>窗口 <select id="zoom"><option value="2400">2.4 秒</option><option value="4800">4.8 秒</option><option value="10000">10 秒</option></select></label></div>
+    <p id="time" class="muted"></p><p id="trialInfo" class="muted"></p>
+  </section>
+</div>
+<section class="nav">
+  <h2>待核对差异</h2>
+  <div class="row"><select id="filter" aria-label="差异类型"><option value="">全部差异</option><option>仅视频</option><option>仅传感器</option><option>视频闭眼明显</option><option>试算有响应</option><option>试算新增仅传感器</option><option>尚未标记</option></select>
+    <button id="prev" aria-label="上一处">上一处</button><select class="diff" id="diff" aria-label="差异位置"></select><button id="next" aria-label="下一处">下一处</button></div>
+  <div class="actions" id="decisions"><button data-label="是眨眼">是眨眼</button><button data-label="非眨眼">非眨眼</button><button data-label="看不清">看不清</button><button data-label="">清除标记</button></div>
+  <p id="hint" class="muted" role="status"></p>
+</section>
+<!-- REVIEW_DATA -->
+<script>
+const $=id=>document.getElementById(id);
+const cases=JSON.parse($('cases').textContent), video=$('video'), canvas=$('wave'), ctx=canvas.getContext('2d');
+const key='blink-local-video-review-v1';
+const alignKey=key+'-alignments';
+function readSaved(name) {try{return JSON.parse(localStorage.getItem(name)||'{}')||{};}catch{return {};}}
+let marks=readSaved(key),alignments=readSaved(alignKey);
+let row, list=[], selected=-1, position=0, center=0, clipEnd=null, blob=null, pendingSeek=null, offset=null, manualAlign=false;
+const second=ms=>(ms/1000).toFixed(3);
+const fmt=new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',dateStyle:'short',timeStyle:'medium',hourCycle:'h23'});
+const markKey=d=>`${row.id}:${row.videoFile}:${d.video}:${d.type}`;
+const clamp=(v,lo,hi)=>Math.min(hi,Math.max(lo,v));
+const hasOffset=()=>Number.isFinite(offset);
+const option=(label,value)=>new Option(label,String(value));
+
+for(const [i,r] of cases.entries()) $('subject').add(option(`${r.subject}号 · ${r.status} · ${r.differences.length}处差异`,i));
+function loadVideo(src) {
+  video.pause();clipEnd=null;pendingSeek=null;
+  if(blob){URL.revokeObjectURL(blob);blob=null;}
+  if(src instanceof File){blob=URL.createObjectURL(src);src=blob;}
+  if(src) video.src=src;else video.removeAttribute('src');
+  video.load();
+}
+function selectSubject() {
+  row=cases[Number($('subject').value)];if(!row)return;
+  const saved=alignments[row.id];
+  manualAlign=saved?.video===row.videoFile&&Number.isFinite(saved?.offset_ms);
+  offset=manualAlign?saved.offset_ms:row.offset;
+  $('align').closest('details').open=false;
+  loadVideo(row.videoUrl);$('file').value='';
+  $('videoStatus').textContent=row.videoFile||'暂无已配对视频';
+  $('seek').max=Math.ceil(row.duration);$('trial').disabled=!row.trial;$('trial').checked=false;
+  $('trial').parentElement.hidden=!row.trial;
+  for(const opt of $('filter').options)if(opt.value.startsWith('试算'))opt.hidden=!row.trial;
+  if($('filter').selectedOptions[0]?.hidden)$('filter').value='';
+  const t=row.trial;
+  $('trialInfo').textContent=t?`试算最低幅度 ${t.before.minDropCounts} → ${Number(t.settings.minDropCounts.toFixed(2))} ADC，噪声倍数 ${t.before.noiseMultiplier} → ${Number(t.settings.noiseMultiplier.toFixed(2))}。`:'';
+  updateSummary();
+  position=center=0;refreshList();
+  if(!list.length) jump(row.original[0]??row.adaptive[0]??0);
+}
+function updateSummary() {
+  $('summary').textContent=`${row.subject}号 · ${row.status}${row.reason?' · '+row.reason:''}${hasOffset()?' · '+(manualAlign?'手动对时 ':row.aligned?'首样本对应视频 ':'试对时 ')+second(offset)+' 秒':''}`;
+  if(manualAlign)$('summary').textContent+=' · 差异清单来自上次批处理';
+  if(row.automatic){const a=row.automatic;$('summary').textContent+=` · 自动补回 ${a.added} · 排除 ${a.removed} · 确认保留 ${a.confirmed} · 确认仅视频 ${a.videoOnly}`;}
+  if(row.trial){const t=row.trial;$('summary').textContent+=` · 试算补回 ${t.recovered.length} 处，剩余仅视频 ${t.videoOnly} / 仅传感器 ${t.sensorOnly}${t.suggested?' · 可优先核对':''}`;}
+}
+const sensorAt=d=>manualAlign&&d.type==='仅视频'?d.video-offset:d.sensor;
+const videoAt=d=>manualAlign&&d.type!=='仅视频'?d.sensor+offset:d.video;
+function refreshList(retain=null) {
+  const filter=$('filter').value;
+  const filters={
+    '尚未标记':d=>!marks[markKey(d)],
+    '视频闭眼明显':d=>d.reason?.startsWith('视频闭眼明显'),
+    '试算有响应':d=>d.type==='仅视频'&&row.trial?.recovered.includes(d.video),
+  };
+  list=filter==='试算新增仅传感器'?(row.trial?.newSensorOnly??[]):
+    row.differences.filter(filters[filter]??(d=>!filter||d.type===filter));
+  const index=retain?list.findIndex(d=>markKey(d)===markKey(retain)):0;
+  selectDiff(list.length?Math.max(0,index):-1);
+}
+function selectDiff(index, move=true) {
+  selected=index;
+  $('diff').replaceChildren(...list.map((d,i)=>option(`${i+1} / ${list.length} · ${second(videoAt(d))} 秒 · ${d.type}${row.trial?.recovered.includes(d.video)?' · 试算有响应':''}${marks[markKey(d)]?' · '+marks[markKey(d)].decision:''}`,i)));
+  if(!list.length)$('diff').add(option('当前没有差异',''));
+  $('diff').selectedIndex=Math.max(0,index);
+  $('prev').disabled=index<=0;$('next').disabled=index<0||index>=list.length-1;
+  $('segment').disabled=index<0;
+  const d=list[index];
+  for(const b of $('decisions').querySelectorAll('button')){
+    b.disabled=!d;b.setAttribute('aria-pressed',String(Boolean(d&&b.dataset.label&&marks[markKey(d)]?.decision===b.dataset.label)));
+  }
+  $('hint').textContent=d?`视频 ${second(videoAt(d))} 秒 · 传感器 ${second(sensorAt(d))} 秒${d.reason?' · '+d.reason:''}。点击片段可从差异前 1 秒播放。`:'可用进度条查看整条波形。';
+  if(d&&move)jump(sensorAt(d));
+}
+function seekVideo(ms) {
+  pendingSeek=ms;
+  if(video.readyState>=1){video.currentTime=clamp(ms/1000,0,video.duration);pendingSeek=null;}
+}
+function jump(ms, moveVideo=true) {
+  video.pause();clipEnd=null;position=center=clamp(ms,0,row.duration);
+  if(moveVideo&&hasOffset())seekVideo(position+offset);
+  draw();
+}
+function draw() {
+  if(!row)return;
+  const w=canvas.clientWidth,h=canvas.clientHeight,dpr=Math.min(devicePixelRatio||1,2);
+  if(!w||!h)return;
+  if(canvas.width!==Math.round(w*dpr)||canvas.height!==Math.round(h*dpr)){canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);}
+  ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h);
+  const left=45,right=w-12,top=12,bottom=h-26,span=Number($('zoom').value);
+  const from=Math.max(0,center-span/2),to=from+span,x=t=>left+(t-from)*(right-left)/span;
+  const {low,high,step}=row.waveform;
+  const first=Math.max(0,Math.ceil(from/step)),last=Math.min(low.length-1,Math.floor(to/step));
+  let min=Infinity,max=-Infinity;
+  for(let i=first;i<=last;i++)if(low[i]!=null){min=Math.min(min,low[i]);max=Math.max(max,high[i]);}
+  if(!Number.isFinite(min)){min=0;max=10;}
+  const padding=Math.max(4,(max-min)*.08),y=v=>bottom-(v-min+padding)*(bottom-top)/(max-min+2*padding);
+  ctx.font='11px system-ui';ctx.fillStyle='#b4c9e0';ctx.strokeStyle='#293d54';
+  for(let i=0;i<=4;i++){
+    const v=min-padding+(max-min+2*padding)*i/4, yy=y(v);
+    ctx.beginPath();ctx.moveTo(left,yy);ctx.lineTo(right,yy);ctx.stroke();ctx.fillText(Math.round(v),3,yy+3);
+    const t=from+span*i/4;ctx.fillText((t/1000).toFixed(2),Math.min(right-31,x(t)-5),h-7);
+  }
+  ctx.save();ctx.beginPath();ctx.rect(left,top,right-left,bottom-top);ctx.clip();
+  const line=(t,color,topY=top)=>{if(t<from||t>to)return;ctx.strokeStyle=color;ctx.beginPath();ctx.moveTo(x(t),topY);ctx.lineTo(x(t),bottom);ctx.stroke();};
+  for(const e of row.aligned||row.adaptive.length?row.adaptive:row.original)line(e,'#b8903d');
+  for(const e of row.candidates)line(e,'#6b7a89',top+22);
+  for(const e of row.differences)if(e.type==='仅视频')line(sensorAt(e),'#438dc2');
+  if($('trial').checked)for(const e of row.trial?.events??[])line(e,'#e295e3',top+16);
+  if(list[selected])line(sensorAt(list[selected]),{'仅视频':'#67c7fb','仅传感器':'#ffd46c','试算新增仅传感器':'#e295e3'}[list[selected].type]);
+  ctx.strokeStyle='#30d7a3';ctx.beginPath();let connected=false;
+  for(let i=first;i<=last;i++){
+    if(low[i]==null){connected=false;continue;}
+    const xx=x(i*step),mid=y((low[i]+high[i])/2);
+    if(connected)ctx.lineTo(xx,mid);else ctx.moveTo(xx,mid);
+    ctx.lineTo(xx,y(low[i]));ctx.lineTo(xx,y(high[i]));ctx.moveTo(xx,mid);connected=true;
+  }
+  ctx.stroke();line(position,'#fff');ctx.restore();
+  $('seek').value=Math.round(position);
+  $('time').textContent=`传感器 ${second(position)} 秒 · ${fmt.format(row.utc+position)} 北京时间${hasOffset()?' · 视频 '+second(position+offset)+' 秒':''}`;
+}
+function sync(videoSeconds=video.currentTime) {
+  if(!hasOffset()||video.seeking||$('align').closest('details').open)return;
+  if(clipEnd!==null&&videoSeconds>=clipEnd){video.pause();clipEnd=null;}
+  position=clamp(videoSeconds*1000-offset,0,row.duration);
+  if(position<center-Number($('zoom').value)*.42||position>center+Number($('zoom').value)*.42)center=position;
+  draw();
+}
+video.ontimeupdate=()=>sync();video.onseeked=()=>sync();
+if(typeof video.requestVideoFrameCallback==='function'){
+  const onFrame=(_now,frame)=>{sync(frame.mediaTime);video.requestVideoFrameCallback(onFrame);};
+  video.requestVideoFrameCallback(onFrame);
+}
+video.onloadedmetadata=()=>{
+  $('videoStatus').textContent=row.videoFile||'已打开本地视频';
+  video.playbackRate=Number($('speed').value);
+  if(pendingSeek!==null)seekVideo(pendingSeek);
+};
+video.onerror=()=>{$('videoStatus').textContent='视频暂时无法读取。请检查外置盘，或手动打开 '+(row.videoFile||'对应视频')+'。';};
+$('file').onchange=()=>{
+  const file=$('file').files[0];if(!file)return;
+  if(row.videoFile&&file.name!==row.videoFile){$('videoStatus').textContent='请打开本条记录配对的视频 '+row.videoFile+'。';return;}
+  loadVideo(file);if(hasOffset())seekVideo(position+offset);
+};
+$('speed').onchange=()=>{video.playbackRate=Number($('speed').value);};
+$('subject').onchange=selectSubject;$('filter').onchange=()=>refreshList();
+$('diff').onchange=()=>selectDiff(Number($('diff').value));
+$('prev').onclick=()=>selectDiff(selected-1);$('next').onclick=()=>selectDiff(selected+1);
+$('seek').oninput=()=>jump(Number($('seek').value),!$('align').closest('details').open);$('zoom').onchange=draw;$('trial').onchange=draw;
+canvas.onclick=e=>{const bounds=canvas.getBoundingClientRect(),span=Number($('zoom').value);jump(Math.max(0,center-span/2)+(e.clientX-bounds.left-45)*span/(bounds.width-57),!$('align').closest('details').open);};
+$('align').onclick=()=>{
+  if(video.readyState<1)return;
+  offset=Math.round(video.currentTime*1000-position);manualAlign=true;
+  alignments[row.id]={subject:row.subject,video:row.videoFile,offset_ms:offset};
+  try{localStorage.setItem(alignKey,JSON.stringify(alignments));}catch{}
+  $('align').closest('details').open=false;updateSummary();selectDiff(selected,false);draw();
+};
+$('resetAlign').onclick=()=>{
+  offset=row.offset;manualAlign=false;
+  delete alignments[row.id];
+  try{localStorage.setItem(alignKey,JSON.stringify(alignments));}catch{}
+  $('align').closest('details').open=false;updateSummary();selectDiff(selected,false);jump(position);
+};
+$('segment').onclick=async()=>{
+  const d=list[selected];if(!d)return;
+  if(video.readyState<1){$('videoStatus').textContent='视频还未打开，请连接外置盘或手动打开对应视频。';return;}
+  $('align').closest('details').open=false;
+  const at=videoAt(d);seekVideo(Math.max(0,at-1000));clipEnd=(at+1000)/1000;
+  try{await video.play();}catch{clipEnd=null;$('videoStatus').textContent='当前视频无法播放。';}
+};
+for(const b of $('decisions').querySelectorAll('button'))b.onclick=()=>{
+  const d=list[selected];if(!d)return;const decision=b.dataset.label;
+  if(decision)marks[markKey(d)]={subject:row.subject,record_id:row.id,video_file:row.videoFile,video_ms:videoAt(d),sensor_ms:sensorAt(d),offset_ms:offset,type:d.type,decision};else delete marks[markKey(d)];
+  let saved=true;
+  try{localStorage.setItem(key,JSON.stringify(marks));}catch{saved=false;}
+  if($('filter').value==='尚未标记')refreshList(d);else selectDiff(selected,false);
+  if(!saved)$('hint').textContent+=' 请保存复核标记，当前浏览器无法自动保留。';
+};
+function saveJson(name,data){
+  const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));
+  const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+$('export').onclick=()=>saveJson('视频复核标记.json',{schema:'blink-video-review-labels/v1',marks:Object.values(marks)});
+$('exportAlign').onclick=()=>saveJson('对时修正.json',Object.fromEntries(Object.values(alignments).map(({subject,video,offset_ms})=>[subject,{video,offset_ms}])));
+window.addEventListener('resize',draw);
+if(cases.length){$('subject').selectedIndex=Math.max(0,cases.findIndex(r=>r.differences.length));selectSubject();}
+</script>
+</body>
+</html>

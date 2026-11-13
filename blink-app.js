@@ -2855,7 +2855,7 @@
   // Import is atomic and always allocates fresh local identifiers: never overwrite.
   function validateReanalysis(re, metadata) {
     const review = ['replay-isolated-review/v1','replay-isolated-review/v2'].includes(re?.algorithm);
-    const bipolar = review || ['replay-adaptive-bipolar/v2','replay-adaptive-bipolar/v3'].includes(re?.algorithm);
+    const bipolar = review || ['replay-adaptive-bipolar/v2','replay-adaptive-bipolar/v3','replay-video-calibrated/v1'].includes(re?.algorithm);
     const adaptive = bipolar || re?.algorithm === 'replay-adaptive-threshold/v1';
     if(!re || !re.config || !Array.isArray(re.events) || re.events.length>CFG.maxEvents*4 ||
        !Number.isFinite(re.drop_counts) || re.drop_counts<0 || re.drop_counts>4095 ||
@@ -3129,8 +3129,11 @@
           };
           document.getElementById('trialDrop').value = re.drop_counts;
           document.getElementById('trialRefractory').value = trialConf.refractoryMs;
+          const trialLabel = re.algorithm === 'replay-video-calibrated/v1' ? '视频双端标定'
+            : String(re.algorithm).startsWith('replay-isolated-review/') ? '含孤立波复核'
+            : String(re.algorithm).startsWith('replay-adaptive-') ? '自适应候选' : '固定阈值 ' + re.drop_counts;
           document.getElementById('trialStatus').textContent =
-            `已从对比文件恢复试调：${String(re.algorithm).startsWith('replay-isolated-review/') ? '含孤立波复核' : String(re.algorithm).startsWith('replay-adaptive-') ? '自适应候选' : '固定阈值 ' + re.drop_counts} / ${S.replay.trial.events.length} 次；原始 ${events.length} 次。`
+            `已从对比文件恢复试调：${trialLabel} / ${S.replay.trial.events.length} 次；原始 ${events.length} 次。`
             + '改参数会按新值重算，原始数据不受影响。';
           } catch (err) {
             // Old database records may predate current import validation.

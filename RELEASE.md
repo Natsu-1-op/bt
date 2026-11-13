@@ -40,3 +40,13 @@ node tools/review-video-batch.js "研究用目录" "视频目录" "复核输出�
 ```
 
 报告使用 MediaPipe 自动眨眼参考。视频、研究记录和生成的复核目录留在本机。
+
+如需用视频与传感器共同标定已有记录，在批量扫描完成后依次运行：
+
+```sh
+node tools/calibrate-video-delivery.js "原研究目录" "视频目录" "复核输出目录"
+node tools/sync-calibrated-delivery.js "原交付目录" "复核输出目录/双端标定结果.json" "新交付目录"
+node tools/build-video-review.js "新研究目录" "视频目录" "复核输出目录/双端标定结果.json" "视频与波形复核.html"
+```
+
+新交付目录需要使用尚未创建的路径。并排复核页可跳到差异位置、调整对时和保存人工标记。研究文件可在控制台导入并重放标定结果，医院播放器使用新交付目录中的 `播放数据.json`。
