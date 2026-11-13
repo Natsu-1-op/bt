@@ -22,3 +22,21 @@ HEX 解析新增实际启动向量/入口检查及重复 FF 冲突检测。
 需要 SWD 重刷本次 Bootloader 才能获得其擦除前检查修复；只通过 OTA 更新 App 不会更新 Bootloader。
 网页 OTA 只能选 App HEX，不能选 Bootloader 或合并整片 HEX。
 本次通过 GCC 构建；Keil 工程源已同步，但未在 Windows Keil 中实际重编。
+
+## 批量视频复核
+
+安装 Node.js 和 uv。在仓库目录运行以下命令，传入含 `记录索引.json` 的逐人研究目录、视频目录、输出目录。
+
+```sh
+node tools/review-video-batch.js "研究用目录" "视频目录" "复核输出目录"
+```
+
+首次运行下载 Python 依赖和 Google MediaPipe Face Landmarker 模型。之后在本机顺序解码视频各帧并保留实际帧时间，处理同一视频时复用输出目录的 `.cache`。打开 `复核汇总.html` 可查看各人可比时长、原采集和自适应计数的对照，点击差异时间打开对应视频位置。详细配对记录在 `复核结果.json`。
+
+工具以 `VID年月日时分秒.mp4` 的北京时间选择候选视频，再用交替 30 秒窗口分别拟合和验证时间偏移。仅在双方有效覆盖的时段配对。待对时的行可传入第四个参数，即按受试者编号给出 `video` 或 `offset_ms` 的修正 JSON。`offset_ms` 表示采集首样本对应的视频毫秒位置，允许负值。
+
+```json
+{"17":{"video":"VID20260101123000.mp4","offset_ms":2100}}
+```
+
+报告使用 MediaPipe 自动眨眼参考。视频、研究记录和生成的复核目录留在本机。

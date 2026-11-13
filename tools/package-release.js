@@ -23,7 +23,8 @@ function copy(rel,filter){fs.cpSync(path.join(root,rel),path.join(dest,rel),{rec
 const skipEvidence=src=>!/^evidence-/.test(path.basename(src));
 for(const rel of [...files,'tests'])copy(rel);
 copy('AI-SYNC',skipEvidence);
-for(const rel of ['tools/run-page.js','tools/test-all.js','tools/package-release.js','tools/serve-page.js'])copy(rel);
+for(const rel of ['tools/run-page.js','tools/test-all.js','tools/package-release.js','tools/serve-page.js',
+  'tools/review-video-batch.js','tools/mediapipe-video.py'])copy(rel);
 function assertNoRules(dir){
   for(const e of fs.readdirSync(dir,{withFileTypes:true})){
     if(e.name==='database.rules.json')throw new Error('Rules file must not be present in delivery folder: '+path.join(dir,e.name));

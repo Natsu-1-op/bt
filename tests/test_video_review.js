@@ -1,5 +1,6 @@
 const assert=require('node:assert/strict');
 const {videoEvents,compare,sensorTracks,frameEar,beijingTimestamp,videoAlignment}=require('../video-review');
+const {alignOffset,matchVideos,summarize,reportPage}=require('../tools/review-video-batch');
 const frames=[];
 for(let t=0;t<=3600;t+=40){
   let ear=.30;
@@ -34,4 +35,21 @@ assert.deepEqual(videoAlignment(timed,'2026-11-13T11:30:40',5,120),
 assert.deepEqual(videoAlignment(timed,'2026-11-13T11:30:10',0,100),
   {start:Date.parse('2026-11-13T03:30:10Z'),offset:15000,from:18,to:100});
 assert.throws(()=>videoAlignment(timed,'2026-11-12T11:30:10',0,100),/没有重叠/);
+const irregular=Array.from({length:90},(_,i)=>1800+i*2300+(i*i*87)%1200);
+const track={first_utc_ms:Date.parse('2026-11-13T03:30:25.495Z'),events:irregular.map(ms=>({ms})),coverage:[{from:0,to:215000}]};
+const shifted={events:irregular.map(ms=>({ms:ms+2110})),coverage:[{from:0,to:220000}]};
+const fit=alignOffset(track,shifted,1495);
+assert.equal(fit.offset,2110);
+assert.equal(fit.reliable,true);
+assert.equal(alignOffset(track,{...shifted,events:shifted.events.filter(e=>Math.floor(e.ms/30000)%2===0)},1495).reliable,false);
+const [matched]=matchVideos([{subject:'17',track}],['VID20261113113024.mp4','VID20261113113036.mp4']);
+assert.equal(matched.file,'VID20261113113024.mp4');
+assert.equal(matched.ambiguous,true);
+const [override]=matchVideos([{subject:'17',track}],['custom.mov'],{'17':{video:'custom.mov',offset_ms:2110}});
+assert.equal(override.manual,2110);
+assert.equal(override.error,null);
+const duplicates=matchVideos([{subject:'17',track},{subject:'18',track}],['VID20261113113024.mp4']);
+assert(duplicates.every(r=>r.error.includes('多条')));
+assert.equal(summarize(matched,{model:'test',frames:[[0,.3]]}).status,'待对时');
+assert.match(reportPage([{subject:'<17>',status:'有差异',video_file:'VID20261113113024.mp4',original:res}],'/local/video'),/&lt;17&gt;/);
 console.log('PASS video EAR timing, occlusion, warm-up, and one-to-one matching');
