@@ -197,6 +197,7 @@
       <div class="field"><label>手动阈值（ADC 计数）</label><input id="manualDrop" type="number" value="60" min="0" max="2000" step="1" disabled></div>
       <div class="field"><label>说明</label><span class="tiny">手动模式实际阈值 = max（阈值下限，手动阈值）。例如要用 8，两项都需设为 8；数值越大越不容易把纹波当作眨眼。</span></div>
     </div>
+    <details><summary>设备显示与固件维护</summary>
     <div class="fields">
       <div class="field"><label>设备屏幕下两行文字</label><textarea id="oledText" rows="2" maxlength="16">眨眼采集</textarea></div>
       <div class="field"><label>屏幕文字</label><button id="btnOledSend" class="ghost" type="button">发送到设备</button></div>
@@ -215,6 +216,7 @@
       <div class="field"><label>说明</label><span class="tiny">仅选择已链接到 0x08002000 的应用 HEX；升级时会暂停采集。</span></div>
     </div>
     <p id="otaStatus" class="tiny">OTA 默认只在调试台中使用。首次启用前必须先刷入带 Bootloader 的完整固件。</p>
+    </details>
     <p id="debugReadout" class="note">默认使用自动抗干扰设置。手动阈值仅建议在调试时使用。</p>
     <div class="row" style="margin-bottom:9px">
       <button id="btnConsoleSave" class="primary" type="button">保存到云端</button>
@@ -278,6 +280,6 @@
   </div>
 </main>
 
-<script src="blink-app.js"></script>
+<script src="blink-app.js?v=20261113"></script>
 </body>
 </html>

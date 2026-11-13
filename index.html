@@ -123,7 +123,6 @@
       <button id="btnPause" class="warn" disabled>暂停测试</button>
       <button id="btnStop" class="danger" disabled>结束测试</button>
       <button id="btnExportBundle" class="ghost" disabled>导出数据</button>
-      <button id="btnClear" class="ghost" disabled>清除当前内容</button>
     </div>
     <p class="note" id="help">
       连接后先佩戴并观察波形是否平稳。填写测试信息后点 <b>开始测试</b>；开始后的约 3 秒内请睁眼并尽量保持自然状态。
@@ -134,31 +133,37 @@
   <section class="card">
     <h2>测试信息</h2>
     <div class="fields">
-      <div class="field"><label>受试者编号</label><input id="subjectId" type="text" maxlength="64" placeholder="例如 P001"></div>
+      <div class="field"><label>受试者编号</label><input id="subjectId" type="text" maxlength="64" placeholder="例如 26"></div>
+    </div>
+    <details><summary>其他信息（可选）</summary>
+    <div class="fields">
       <div class="field"><label>设备编号</label><input id="deviceId" type="text" maxlength="64" placeholder="例如 EOG-01"></div>
       <div class="field"><label>操作者</label><input id="operatorId" type="text" maxlength="64" placeholder="姓名或编号"></div>
     </div>
     <div class="fields">
       <div class="field"><label>测试备注</label><input id="condition" type="text" maxlength="160" placeholder="例如 常规测试"></div>
     </div>
+    </details>
   </section>
 
 
-  <section class="card">
-    <h2>结果查看（可选）</h2>
+  <details class="card">
+    <summary>本机记录</summary>
     <div class="fields">
-      <div class="field"><label>从第几秒开始</label><input id="fT0" type="number" value="0" min="0" step="1"></div>
-      <div class="field"><label>到第几秒结束</label><input id="fT1" type="number" value="0" min="0" step="1"></div>
-      <div class="field"><label>统计时长（秒）</label><input id="fWin" type="number" value="30" min="5" step="5"></div>
-    </div>
-    <div class="fields">
-      <div class="field"><label>每隔几秒统计一次</label><input id="fStep" type="number" value="5" min="1" step="1"></div>
       <div class="field"><label>本机保存的测试</label><select id="sessionList"><option value="">当前测试</option></select>
         <button id="btnDeleteSession" class="danger" type="button" style="width:100%;padding:6px;margin-top:6px;font-size:12px" disabled>删除这条</button>
         <button id="btnExportOne" class="ghost" type="button" style="width:100%;padding:6px;margin-top:6px;font-size:12px" disabled>导出这条</button>
         <button id="btnExportAll" class="ghost" type="button" style="width:100%;padding:6px;margin-top:6px;font-size:12px">导出全部</button>
       </div>
       <div class="field"><label>查看历史测试</label><button id="btnLoad" class="ghost" style="width:100%;padding:6px">打开所选测试</button></div>
+    </div>
+    <button id="btnClear" class="ghost" disabled>清除当前内容</button>
+    <details><summary>区间统计</summary>
+    <div class="fields">
+      <div class="field"><label>起始秒</label><input id="fT0" type="number" value="0" min="0" step="1"></div>
+      <div class="field"><label>结束秒</label><input id="fT1" type="number" value="0" min="0" step="1"></div>
+      <div class="field"><label>统计时长（秒）</label><input id="fWin" type="number" value="30" min="5" step="5"></div>
+      <div class="field"><label>统计步长（秒）</label><input id="fStep" type="number" value="5" min="1" step="1"></div>
     </div>
     <div class="row" style="margin-bottom:9px">
       <button id="btnAnalyze" class="primary" disabled>查看结果</button>
@@ -171,7 +176,8 @@
       <div>记录时长<b id="sDur">--</b></div>
       <div>窗口数<b id="sWin">--</b></div>
     </div>
-  </section>
+    </details>
+  </details>
 
   <div id="cloudGate" class="cloud-gate hidden">
     <div class="cloud-box">
@@ -186,6 +192,6 @@
   </div>
 </main>
 
-<script src="blink-app.js"></script>
+<script src="blink-app.js?v=20261113"></script>
 </body>
 </html>

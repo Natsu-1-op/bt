@@ -3,9 +3,9 @@ const { readPageSource, extractFunction } = require('./helpers/source');
 for(const page of ['index.html','test.html']) {
   const source = readPageSource(page);
   const reset = extractFunction(source,'resetFilter');
-  const state = {ma:[1], maSum:1, adaptiveThreshold:{drop:12}};
+  const state = {ma:[1], maSum:1, adaptiveThreshold:{drop:12}, bipolarGate:{}};
   new Function('S', reset + '; resetFilter();')(state);
-  assert.deepEqual(state, {ma:[], maSum:0, adaptiveThreshold:null});
+  assert.deepEqual(state, {ma:[], maSum:0, adaptiveThreshold:null, bipolarGate:null});
   const hide = extractFunction(source,'hideCloudGate');
   assert(!hide.includes('startWithCloudSync'));
   assert.throws(()=>extractFunction(source,'notAFunction'));

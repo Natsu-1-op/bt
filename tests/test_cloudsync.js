@@ -29,7 +29,7 @@ const latest={...config,updatedBy:'test.html:field-default-v2'};
    assert.equal(cfg.minDropCounts,8);
    assert.equal(cfg.noiseMultiplier,4);
    assert.equal(cfg.refractoryMs,300);
-   assert.equal(cfg.thresholdPolicy,'adaptive-bipolar-v2');
+   assert.equal(cfg.thresholdPolicy,'adaptive-bipolar-v3');
    assert.equal(a.ui.oledText.value,'现场采集','legacy display settings still load');
   }finally{e.close();}
  }

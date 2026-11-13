@@ -169,6 +169,7 @@
   const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
   const DB_NAME = 'blink-collector-v1', DB_VERSION = 1, CHUNK_SAMPLES = 400; // 200 Hz 下每块约 2 秒，降低异常退出时的未提交数据量
   const iso = (ms) => Number.isFinite(ms) ? new Date(ms).toISOString() : '';
+  const beijingLabel = ms => Number.isFinite(ms) ? iso(ms+28800000).replace('T',' ').slice(0,19)+' 北京时间' : '时间未记录';
   const newId = () => crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
   function openDb() {
@@ -320,7 +321,7 @@
   // Versioned policy shared by acquisition and reanalysis. A noisy start is
   // only a seed, not a permanent floor. Keep the operator's noise multiplier
   // and minimum, and don't immediately lower the threshold on one quiet block.
-  function makeAdaptiveThreshold(config, initialDrop, fasterQuietRecovery = false) {
+  function makeAdaptiveThreshold(config, initialDrop, fasterQuietRecovery = false, isolateBurst = false) {
     const count = Math.min(800, Math.max(8, Math.round(2 * config.sampleRateHz)));
     const samples = [], history = [];
     let clipped = false;
@@ -335,7 +336,16 @@
         samples.push(filt);
         if (samples.length < count) return;
         if (!clipped) {
-          const latest = robustNoise(samples);
+          let latest = robustNoise(samples);
+          if (isolateBurst && samples.length >= 32) {
+            const quarters = Array.from({length:4},(_,i)=>robustNoise(
+              samples.slice(Math.floor(i*count/4),Math.floor((i+1)*count/4)))).sort((a,b)=>a-b);
+            // A short disturbance must not hold the threshold high after the
+            // rest of this block is quiet. Sustained noise keeps its guard.
+            if (quarters[2] <= 1.6*quarters[0] && quarters[3] >= 3*quarters[2]) {
+              latest = Math.min(latest, Math.max(0.7*latest, quarters[2]));
+            }
+          }
           history.push(latest);
           if (history.length > 5) history.shift();
           const local = Math.max(config.minDropCounts, config.noiseMultiplier * Math.max(latest, median(history)));
@@ -502,7 +512,7 @@
   function refreshButtons() {
     ui.btnConn.disabled = S.connecting;
     const replayName=document.getElementById('replayRecordName');
-    if(replayName)replayName.textContent=S.session ? `当前记录：${S.session.participant_id || '未命名'} · ${iso(S.session.created_utc_ms).replace('T',' ').slice(0,19)} UTC` : '请先打开一条记录';
+    if(replayName)replayName.textContent=S.session ? `当前记录：${S.session.participant_id || '未命名'} · ${beijingLabel(S.session.created_utc_ms)}` : '请先打开一条记录';
     const c = S.connected;
     const running = S.phase === 'RUN', paused = S.phase === 'PAUSE',
           cal = S.phase === 'CAL' || S.phase === 'BLINKCAL';
@@ -585,7 +595,7 @@
     const active = ['CAL', 'BLINKCAL', 'RUN', 'PAUSE'].includes(S.phase);
     const config = active && S.session ? S.session.config : currentConfig();
     if (active && S.phase !== 'CAL' && S.phase !== 'BLINKCAL' &&
-        ['adaptive-noise-v1','adaptive-bipolar-v2'].includes(config.thresholdPolicy) && !config.manualThresholdEnabled) {
+        ['adaptive-noise-v1','adaptive-bipolar-v2','adaptive-bipolar-v3'].includes(config.thresholdPolicy) && !config.manualThresholdEnabled) {
       return `自动阈值：当前 ${S.dropCounts.toFixed(1)} ADC 计数；随近期噪声调整，仍受设置下限及抗干扰等级约束。`;
     }
     if (config.blinkCalEnabled) {
@@ -618,7 +628,7 @@
 
   function currentConfig() {
     return {
-      thresholdPolicy: 'adaptive-bipolar-v2',
+      thresholdPolicy: 'adaptive-bipolar-v3',
       adcMax: CFG.adcMax, sampleRateHz: CFG.sampleRateHz, maLength: CFG.maLength,
       calibrationMs: CFG.calibrationMs, calibrationSkipMs: CFG.calibrationSkipMs, noiseMultiplier: boundedInputNumber(ui.fMult, CFG.noiseMultiplier, 0, 12),
       minDropCounts: boundedInputNumber(ui.fMinDrop, CFG.minDropCounts, 0, 200), releaseRatio: CFG.releaseRatio,
@@ -1411,14 +1421,14 @@
   function detect(t, filt, raw) {
     const config = S.session ? S.session.config : currentConfig();
     const refr = config.refractoryMs;
-    const adaptive = S.phase === 'RUN' &&
-      ['adaptive-noise-v1','adaptive-bipolar-v2'].includes(config.thresholdPolicy) && !config.manualThresholdEnabled;
+    const bipolar = ['adaptive-bipolar-v2','adaptive-bipolar-v3'].includes(config.thresholdPolicy);
+    const adaptive = S.phase === 'RUN' && (bipolar || config.thresholdPolicy === 'adaptive-noise-v1') && !config.manualThresholdEnabled;
     if (adaptive) {
       const tracker = S.adaptiveThreshold ??= makeAdaptiveThreshold(config,
         S.session?.blink_calibration?.threshold ?? S.session?.detector?.drop_counts ?? S.dropCounts,
-        config.thresholdPolicy === 'adaptive-bipolar-v2');
+        bipolar, config.thresholdPolicy === 'adaptive-bipolar-v3');
       tracker.push(t, filt, raw);
-      if (config.thresholdPolicy === 'adaptive-bipolar-v2') {
+      if (bipolar) {
         const gate = S.bipolarGate ??= makeBipolarGate(config, S.baseline, S.refractoryUntil);
         if (t < tracker.blockedUntil) { gate.cancel(); return; }
         const ev = gate.push(t, filt, tracker.drop);
@@ -1433,7 +1443,7 @@
           if (S.events.length > CFG.maxEvents) S.events.shift();
           S.rec.ev.push(ev);
           addEvent('blink', ev.t, ev.utcMs, {amplitude_counts:ev.amp, width_ms:ev.width,
-            threshold_counts:ev.threshold_counts, polarity:ev.polarity, algorithm:'web-adaptive-bipolar-v2'});
+            threshold_counts:ev.threshold_counts, polarity:ev.polarity, algorithm:'web-'+config.thresholdPolicy});
           ui.mLast.textContent = `${ev.width.toFixed(0)} ms / ${ev.amp}`;
           updateLiveStats(t); pushStats();
         }
@@ -2400,8 +2410,8 @@
   // 方案 C（现场眨眼标定）定出来的阈值是量出来的，离线这条路上没有眨眼标定那一段数据，
   // 重算必然对不上，同一份记录「实时」和「回看」就会给出不同的眨眼数。
   function makeOfflineDetector(config, fixedDrop, blinkCalibration = null,
-    adaptive = ['adaptive-noise-v1','adaptive-bipolar-v2'].includes(config.thresholdPolicy) && !config.manualThresholdEnabled,
-    bipolar = adaptive && config.thresholdPolicy === 'adaptive-bipolar-v2') {
+    adaptive = ['adaptive-noise-v1','adaptive-bipolar-v2','adaptive-bipolar-v3'].includes(config.thresholdPolicy) && !config.manualThresholdEnabled,
+    bipolar = adaptive && ['adaptive-bipolar-v2','adaptive-bipolar-v3'].includes(config.thresholdPolicy)) {
     let ma = [], maSum = 0, cal = [], calStart = null, baseline = 0, thDown = 0, thUp = 0;
     let ready = false, inBlink = false, falling = 0, fallingUtc = 0, minimum = 0, refractoryUntil = 0, previousSegment = null;
     let tracker = null, initialDrop = null, eventDrop = null, gate = null;
@@ -2461,7 +2471,7 @@
       }
       if (adaptive) {
         if (flags & 8) return null; // A recording stopped during Plan C has no formal blinks in that interval.
-        tracker ??= makeAdaptiveThreshold(config, initialDrop, bipolar);
+        tracker ??= makeAdaptiveThreshold(config, initialDrop, bipolar, bipolar && config.thresholdPolicy === 'adaptive-bipolar-v3');
         tracker.push(t, filt, raw);
         if (bipolar) {
           gate ??= makeBipolarGate(config, baseline, refractoryUntil);
@@ -2792,7 +2802,7 @@
       ui.sessionList.textContent = '';
       sessions.sort((a, b) => b.created_utc_ms - a.created_utc_ms).forEach(s => {
         const option = document.createElement('option'); option.value = s.id;
-        option.textContent = `${s.participant_id || '未命名'} · ${iso(s.created_utc_ms).replace('T', ' ').slice(0, 19)}`;
+        option.textContent = `${s.participant_id || '未命名'} · ${beijingLabel(s.created_utc_ms)}`;
         if (s.status === 'recording' || s.status === 'interrupted_snapshot') option.textContent += ' · 未结束';
         if (s.id === selected) option.selected = true;
         ui.sessionList.append(option);
@@ -2844,8 +2854,8 @@
 
   // Import is atomic and always allocates fresh local identifiers: never overwrite.
   function validateReanalysis(re, metadata) {
-    const review = re?.algorithm === 'replay-isolated-review/v1';
-    const bipolar = review || re?.algorithm === 'replay-adaptive-bipolar/v2';
+    const review = ['replay-isolated-review/v1','replay-isolated-review/v2'].includes(re?.algorithm);
+    const bipolar = review || ['replay-adaptive-bipolar/v2','replay-adaptive-bipolar/v3'].includes(re?.algorithm);
     const adaptive = bipolar || re?.algorithm === 'replay-adaptive-threshold/v1';
     if(!re || !re.config || !Array.isArray(re.events) || re.events.length>CFG.maxEvents*4 ||
        !Number.isFinite(re.drop_counts) || re.drop_counts<0 || re.drop_counts>4095 ||
@@ -2890,7 +2900,7 @@
     if(config.calibrationSkipMs!==undefined && (!Number.isFinite(config.calibrationSkipMs) || config.calibrationSkipMs<0 || config.calibrationSkipMs>=config.calibrationMs))throw new Error('记录准备时间无效。');
     if(config.blinkCalEnabled!==undefined && typeof config.blinkCalEnabled!=='boolean')throw new Error('记录标定开关无效。');
     if(config.blinkCalRatio!==undefined && (!Number.isFinite(config.blinkCalRatio) || config.blinkCalRatio<=0 || config.blinkCalRatio>1))throw new Error('记录标定比例无效。');
-    if(config.thresholdPolicy!==undefined && !['adaptive-noise-v1','adaptive-bipolar-v2'].includes(config.thresholdPolicy))throw new Error('不支持的阈值策略。');
+    if(config.thresholdPolicy!==undefined && !['adaptive-noise-v1','adaptive-bipolar-v2','adaptive-bipolar-v3'].includes(config.thresholdPolicy))throw new Error('不支持的阈值策略。');
     for(const v of Object.values(config))if(typeof v==='number'&&!Number.isFinite(v))throw new Error('记录参数无效。');
   }
 
@@ -3019,7 +3029,7 @@
     r.visible = r.rows.slice(Math.max(0,lo-4000),lo).map(row=>({t:row[0],raw:row[3],filt:row[4]}));
     const row=r.rows[Math.max(0,lo-1)];
     document.getElementById('replaySeek').value = String(r.position-r.start);
-    document.getElementById('replayStatus').textContent = `${((r.position-r.start)/1000).toFixed(1)} / ${((r.end-r.start)/1000).toFixed(1)} 秒 · 原始 ${r.events.filter(e=>e.t<=r.position).length} 次${r.trial ? ' / 试调 '+r.trial.events.filter(e=>e.t<=r.position).length+' 次' : ''} · ${iso(row[1])}`;
+    document.getElementById('replayStatus').textContent = `${((r.position-r.start)/1000).toFixed(1)} / ${((r.end-r.start)/1000).toFixed(1)} 秒 · 原始 ${r.events.filter(e=>e.t<=r.position).length} 次${r.trial ? ' / 试调 '+r.trial.events.filter(e=>e.t<=r.position).length+' 次' : ''} · ${beijingLabel(row[1])}`;
   }
   async function applyReplayTrial(adaptive = false, review = false) {
     const r=S.replay;
@@ -3043,7 +3053,8 @@
     const config=adaptive
       ? {...r.original.config,manualThresholdEnabled:false,refractoryMs:refractory}
       : {...r.original.config,manualThresholdEnabled:true,manualDropCounts:drop,minDropCounts:0,refractoryMs:refractory};
-    const detector=makeOfflineDetector(config,drop,r.original.blink_calibration,adaptive,adaptive);
+    const detector=makeOfflineDetector(adaptive ? {...config,thresholdPolicy:'adaptive-bipolar-v3'} : config,
+      drop,r.original.blink_calibration,adaptive,adaptive);
     const events=[];
     for(let i=0;i<r.rows.length;i++){
       if(i%2000===0){
@@ -3058,7 +3069,7 @@
     const added=review ? reviewIsolatedBlinks(r.rows,config,events,formalStart) : [];
     const merged=added.length ? [...events,...added].sort((a,b)=>a.t-b.t) : events;
     r.trial={config,drop_counts:drop,events:merged,computed_utc_ms:Date.now(),
-      algorithm:review ? 'replay-isolated-review/v1' : adaptive ? 'replay-adaptive-bipolar/v2' : 'replay-fixed-threshold/v1',
+      algorithm:review ? 'replay-isolated-review/v2' : adaptive ? 'replay-adaptive-bipolar/v3' : 'replay-fixed-threshold/v1',
       calibration_policy:'reuse-original-calibration-boundary-and-baseline'};
     status.textContent=review
       ? (Number.isFinite(formalStart)
@@ -3119,7 +3130,7 @@
           document.getElementById('trialDrop').value = re.drop_counts;
           document.getElementById('trialRefractory').value = trialConf.refractoryMs;
           document.getElementById('trialStatus').textContent =
-            `已从对比文件恢复试调：${re.algorithm === 'replay-isolated-review/v1' ? '含孤立波复核' : re.algorithm === 'replay-adaptive-bipolar/v2' ? '双向自适应候选' : re.algorithm === 'replay-adaptive-threshold/v1' ? '自适应候选' : '固定阈值 ' + re.drop_counts} / ${S.replay.trial.events.length} 次；原始 ${events.length} 次。`
+            `已从对比文件恢复试调：${String(re.algorithm).startsWith('replay-isolated-review/') ? '含孤立波复核' : String(re.algorithm).startsWith('replay-adaptive-') ? '自适应候选' : '固定阈值 ' + re.drop_counts} / ${S.replay.trial.events.length} 次；原始 ${events.length} 次。`
             + '改参数会按新值重算，原始数据不受影响。';
           } catch (err) {
             // Old database records may predate current import validation.
