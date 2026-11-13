@@ -6,108 +6,188 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
 <title>眨眼记录播放器</title>
 <style>
-:root{color-scheme:dark;font:16px system-ui;background:#0a1422;color:#e9f1fc}
-body{max-width:1050px;margin:auto;padding:20px}h1{font-size:1.55rem;margin:0}
-section{border:1px solid #263c55;background:#112035;border-radius:14px;margin:16px 0;padding:16px}
-p{line-height:1.55;color:#b8c8df}label{display:inline-grid;gap:6px}input,select,button{font:inherit;min-width:0}
-input[type=file],select,button{background:#1b314c;color:inherit;border:1px solid #446583;border-radius:8px;padding:9px}
-button:disabled,select:disabled{opacity:.5}canvas{display:block;width:100%;height:270px;background:#08111e;border-radius:9px}
-.row{display:flex;align-items:end;flex-wrap:wrap;gap:12px}#seek{width:100%;margin:14px 0}
-#clock{font-variant-numeric:tabular-nums}#status{min-height:1.5em}
-@media(max-width:540px){body{padding:10px}section{padding:12px}canvas{height:210px}.row label{max-width:100%}}
+:root{color-scheme:dark;font:16px system-ui;background:#0a1422;color:#e9f1fc;--line:#29415d;--muted:#9db2ce}
+*{box-sizing:border-box}body{max-width:1120px;margin:auto;padding:24px}h1{font-size:1.65rem;margin:0}h2{font-size:1.2rem;margin:0}
+header p,section p{line-height:1.5;color:var(--muted);margin:8px 0}
+section{border:1px solid var(--line);background:#112035;border-radius:15px;margin:16px 0;padding:16px}
+label{display:inline-grid;gap:5px;min-width:0;color:var(--muted);font-size:.85rem}
+input,select,button{font:inherit;min-width:0;max-width:100%}
+input[type=file],select,button{background:#1b314c;color:#eef5ff;border:1px solid #446583;border-radius:8px;padding:9px}
+button{cursor:pointer}button:disabled,select:disabled{opacity:.45;cursor:default}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid #a2d2ff;outline-offset:3px}
+#play{background:#146452;border-color:#24967d}#pause{background:#513d22;border-color:#916c34}
+.row{display:flex;align-items:end;flex-wrap:wrap;gap:9px}.row label{max-width:100%}
+.heading{display:flex;flex-wrap:wrap;justify-content:space-between;gap:12px;align-items:center;margin-bottom:12px}
+#stats{font-variant-numeric:tabular-nums;color:#9eead5}#clock{font-variant-numeric:tabular-nums;font-size:.9rem}
+canvas{display:block;width:100%;height:clamp(205px,40vh,365px);background:#08111e;border-radius:9px}
+#seek{width:100%;margin:14px 0 5px;accent-color:#49c6ae}
+.controls{margin-top:12px;align-items:center}.controls button{min-height:44px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:.82rem;color:var(--muted);margin:9px 0}
+.legend span::before{content:"";display:inline-block;width:12px;height:3px;margin:0 6px 3px 0;background:var(--color)}
+@media(max-width:540px){body{padding:12px}section{padding:12px}.row label:has(input[type=file]),.row label:has(#record){width:100%}.controls{gap:6px}.controls button{padding:7px;font-size:.85rem}}
 </style>
 </head>
 <body>
-<h1>眨眼记录播放器</h1><p>波形回放 · 北京时间</p>
+<header><h1>眨眼记录播放器</h1><p>波形回放 · 北京时间</p></header>
 <section>
 <div class="row"><label>导入播放数据<input id="file" type="file" accept=".json,application/json"></label>
-<label>选择记录<select id="record" disabled></select></label></div>
+<label>受试者<select id="record" disabled></select></label></div>
 <p id="status" role="status">请选择配套的播放数据文件。</p>
 </section>
-<section>
-<div class="row"><button id="play" disabled>播放</button><button id="prev" disabled>上一个标记</button><button id="next" disabled>下一个标记</button>
-<label>倍速<select id="speed"><option value=".5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label></div>
+<section aria-label="波形回放">
+<div class="heading"><h2 id="subject">未选择记录</h2><span id="stats">—</span></div>
+<canvas id="wave" aria-label="显示波形与眨眼标记"></canvas>
+<div class="legend"><span style="--color:#38d996">波形</span><span style="--color:#f3c75c">眨眼标记</span><span style="--color:#76aaff">补检候选</span></div>
 <input id="seek" aria-label="播放进度" type="range" min="0" max="0" value="0" step="1" disabled>
 <p id="clock" aria-live="off">尚未导入</p>
-<canvas id="wave" aria-label="显示波形与眨眼标记"></canvas>
-<p>绿线：显示波形；黄线：眨眼标记；空白：无采样。</p>
+<div class="row controls"><button id="play" disabled>播放</button><button id="pause" disabled>暂停</button>
+<button id="prev" disabled>上一处标记</button><button id="next" disabled>下一处标记</button>
+<label>倍速<select id="speed"><option value=".5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label></div>
 </section>
 <script>
 'use strict';
 const $=id=>document.getElementById(id), c=$('wave'), ctx=c.getContext('2d');
-let records=[], r=null, pos=0, playing=false, stamp=0, generation=0;
+let records=[], r=null, pos=0, playing=false, stamp=0, generation=0, frameId=null, step=40, center=null, half=null;
 const fmt=new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',dateStyle:'medium',timeStyle:'medium',hourCycle:'h23'});
 function validateDisplay(input){
-  if(input?.schema!=='blink-display/v1'||input.step_ms!==40||!Array.isArray(input.records)||!input.records.length||input.records.length>500)
+  const version=input?.schema==='blink-display/v2'?2:input?.schema==='blink-display/v1'?1:0;
+  if(!version||input.step_ms!==(version===2?20:40)||!Array.isArray(input.records)||!input.records.length||input.records.length>500)
     throw Error('文件格式不匹配，请选择配套的播放数据。');
   let points=0;
   for(const x of input.records){
     if(!x || !/^\d{1,4}$/.test(x.subject)||!/^R\d+$/.test(x.record)||!Number.isFinite(Date.parse(x.beijing_start))||
       !Number.isFinite(x.duration_ms)||x.duration_ms<0||x.duration_ms>86400000||!Array.isArray(x.segments)||!Array.isArray(x.marks))
       throw Error('播放记录格式无效。');
-    let end=-1;
+    let end=-1,limit=version===2?127:31;
     for(const s of x.segments){
       if(!s||!Number.isFinite(s.start_ms)||!Number.isFinite(s.end_ms)||s.start_ms<end||s.end_ms<s.start_ms||s.end_ms>x.duration_ms||
         !Number.isFinite(Date.parse(s.beijing_start))||!Array.isArray(s.trace)||
-        s.trace.length>Math.floor((s.end_ms-s.start_ms)/40)+2||s.trace.some(v=>v!==null&&(!Number.isInteger(v)||v< -31||v>31)))throw Error('显示波形无效。');
+        s.trace.length>Math.floor((s.end_ms-s.start_ms)/input.step_ms)+2||s.trace.some(v=>v!==null&&(!Number.isInteger(v)||Math.abs(v)>limit)))throw Error('显示波形无效。');
       end=s.end_ms;points+=s.trace.length;
     }
-    if(x.marks.some((t,i)=>!Number.isFinite(t)||t<0||t>x.duration_ms||(i&&t<x.marks[i-1])))throw Error('标记时间无效。');
+    for(const marks of [x.marks,x.review_marks??[]])
+      if(!Array.isArray(marks)||marks.some((t,i)=>!Number.isFinite(t)||t<0||t>x.duration_ms||(i&&t<marks[i-1])))throw Error('标记时间无效。');
   }
-  if(points>2000000)throw Error('文件过大，请分批播放。');
+  if(points>3000000)throw Error('文件过大，请分批播放。');
   return input.records;
 }
 function selectRecord(i){
-  r=records[i];playing=false;pos=0;
+  pause();r=records[i];pos=0;center=half=null;
   $('seek').max=r.duration_ms;
-  for(const id of ['play','prev','next','seek'])$(id).disabled=false;
-  $('status').textContent=(r.incomplete?'部分记录 · ':'已打开 · ')+r.marks.length+' 个眨眼标记';
+  $('subject').textContent='受试者 '+r.subject;
+  $('status').textContent=r.incomplete?'已打开部分记录。':'已打开记录。';
   draw();
 }
+function openData(input){
+  const data=validateDisplay(input);
+  records=data;step=input.step_ms;
+  $('record').replaceChildren(...records.map((x,i)=>new Option('受试者 '+x.subject+' · '+fmt.format(Date.parse(x.beijing_start)),i)));
+  $('record').disabled=false;selectRecord(0);
+}
 $('file').onchange=async()=>{
-  const file=$('file').files[0], g=++generation;if(!file)return;
+  const file=$('file').files[0],g=++generation;if(!file)return;
   try{
     if(file.size>16*1024*1024)throw Error('文件过大，请选择配套的播放数据。');
-    const data=validateDisplay(JSON.parse(await file.text()));if(g!==generation)return;
-    records=data;$('record').replaceChildren(...records.map((x,i)=>new Option('受试者 '+x.subject+' · '+fmt.format(Date.parse(x.beijing_start))+' · '+x.record,i)));
-    $('record').disabled=false;selectRecord(0);
+    const data=JSON.parse(await file.text());if(g===generation)openData(data);
   }catch(e){if(g===generation)$('status').textContent=e.message;}
 };
 $('record').onchange=()=>selectRecord(Number($('record').value));
-function seek(ms){if(!r)return;pos=Math.min(r.duration_ms,Math.max(0,ms));stamp=performance.now();draw();}
+function advance(now){
+  if(!playing||!r)return;
+  pos=Math.min(r.duration_ms,pos+Math.max(0,now-stamp)*Number($('speed').value));
+  stamp=now;
+}
+function pause(now=performance.now()){
+  advance(now);playing=false;
+  if(frameId!==null)cancelAnimationFrame(frameId);
+  frameId=null;draw();
+}
+function play(){
+  if(!r||playing)return;
+  if(pos>=r.duration_ms)pos=0;
+  stamp=performance.now();playing=true;draw();
+  frameId=requestAnimationFrame(frame);
+}
+function seek(ms){
+  if(!r||!Number.isFinite(ms))return;
+  pause();pos=Math.min(r.duration_ms,Math.max(0,ms));center=half=null;draw();
+}
+function frame(now){
+  frameId=null;if(!playing)return;
+  advance(now);
+  if(pos>=r.duration_ms){pause(now);return;}
+  draw();frameId=requestAnimationFrame(frame);
+}
+$('seek').onpointerdown=()=>pause();
 $('seek').oninput=()=>seek(Number($('seek').value));
-$('play').onclick=()=>{if(!r)return;if(!playing&&pos>=r.duration_ms)seek(0);playing=!playing;stamp=performance.now();draw();};
-$('prev').onclick=()=>{const t=r?.marks.findLast(t=>t<pos-1);if(t!==undefined)seek(t);};
-$('next').onclick=()=>{const t=r?.marks.find(t=>t>pos+1);if(t!==undefined)seek(t);};
+$('play').onclick=play;$('pause').onclick=()=>pause();
+$('speed').onchange=()=>{stamp=performance.now();};
+function jump(direction){
+  if(!r)return;
+  const marks=[...r.marks,...(r.review_marks||[])].sort((a,b)=>a-b);
+  const t=direction<0?marks.reverse().find(t=>t<pos-1):marks.find(t=>t>pos+1);
+  if(t!==undefined)seek(t);
+}
+$('prev').onclick=()=>jump(-1);$('next').onclick=()=>jump(1);
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'&&r&&!e.repeat&&!e.target.closest('button,input,select,textarea,[contenteditable]')){
+    e.preventDefault();if(playing)pause();else play();
+  }
+});
+document.addEventListener('visibilitychange',()=>{if(document.hidden&&playing)pause();});
 function draw(){
   const w=c.clientWidth,h=c.clientHeight,d=Math.min(devicePixelRatio||1,2);
   if(c.width!==Math.round(w*d)||c.height!==Math.round(h*d)){c.width=Math.round(w*d);c.height=Math.round(h*d);}
   ctx.setTransform(d,0,0,d,0,0);ctx.clearRect(0,0,w,h);
-  ctx.strokeStyle='#233952';for(let i=1;i<5;i++){ctx.beginPath();ctx.moveTo(0,h*i/5);ctx.lineTo(w,h*i/5);ctx.stroke();}
+  const top=12,bottom=h-23,right=w-12,leftPad=12,plotH=Math.max(1,bottom-top);
+  const left=Math.max(0,pos-7600),span=8000,end=left+span;
+  const x=t=>leftPad+(t-left)*(right-leftPad)/span;
+  ctx.strokeStyle='#233952';ctx.lineWidth=1;
+  for(let i=0;i<=4;i++){const y=top+plotH*i/4;ctx.beginPath();ctx.moveTo(leftPad,y);ctx.lineTo(right,y);ctx.stroke();}
+  ctx.fillStyle='#91a8c6';ctx.font='11px system-ui';
+  const stride=w<430?2000:1000;
+  for(let t=Math.ceil(left/stride)*stride;t<end-200;t+=stride){
+    const xx=x(t);ctx.beginPath();ctx.moveTo(xx,top);ctx.lineTo(xx,bottom);ctx.stroke();ctx.fillText((t/1000)+' s',xx+3,h-7);
+  }
   if(!r)return;
-  const left=Math.max(0,pos-7500),right=left+8000,x=t=>(t-left)*w/(right-left);
-  ctx.strokeStyle='#38d996';ctx.lineWidth=1.6;
+  const visible=[],levels=[];
   for(const s of r.segments){
-    if(s.end_ms<left||s.start_ms>right)continue;
-    ctx.beginPath();let open=false;
-    for(let i=Math.max(0,Math.ceil((left-s.start_ms)/40));i<s.trace.length&&s.start_ms+i*40<=right;i++){
-      const v=s.trace[i];if(v===null){open=false;continue;}
-      const y=h/2-v*h/75;
-      if(open)ctx.lineTo(x(s.start_ms+i*40),y);else ctx.moveTo(x(s.start_ms+i*40),y);
-      open=true;
+    if(s.end_ms<left||s.start_ms>end)continue;
+    const points=[];
+    for(let i=Math.max(0,Math.ceil((left-s.start_ms)/step));i<s.trace.length&&s.start_ms+i*step<=end;i++){
+      const v=s.trace[i];points.push([s.start_ms+i*step,v]);if(v!==null)levels.push(v);
     }
+    visible.push(points);
+  }
+  if(levels.length){
+    levels.sort((a,b)=>a-b);
+    const q=p=>levels[Math.floor((levels.length-1)*p)];
+    const mid=q(.5),spread=Math.max(step===20?16:7,Math.abs(q(.01)-mid)*1.1,Math.abs(q(.99)-mid)*1.1);
+    center=center===null?mid:center+.15*(mid-center);
+    half=half===null?spread:half+(spread-half)*(spread>half?.3:.06);
+  }
+  ctx.save();ctx.beginPath();ctx.rect(leftPad,top,Math.max(0,right-leftPad),plotH);ctx.clip();
+  const y=v=>top+plotH*(.5-(v-(center??0))/(2*(half??1)));
+  ctx.strokeStyle='#38d996';ctx.lineWidth=1.65;ctx.lineJoin='round';ctx.lineCap='round';
+  for(const points of visible){
+    ctx.beginPath();let open=false;
+    for(const [t,v] of points){if(v===null){open=false;continue;}if(open)ctx.lineTo(x(t),y(v));else ctx.moveTo(x(t),y(v));open=true;}
     ctx.stroke();
   }
-  ctx.strokeStyle='#f3c75c';ctx.lineWidth=1;
-  for(const t of r.marks)if(t>=left&&t<=right){ctx.beginPath();ctx.moveTo(x(t),0);ctx.lineTo(x(t),h);ctx.stroke();}
-  ctx.strokeStyle='#84b7ff';ctx.beginPath();ctx.moveTo(x(pos),0);ctx.lineTo(x(pos),h);ctx.stroke();
+  for(const [marks,color] of [[r.marks,'#f3c75c'],[r.review_marks||[],'#76aaff']]){
+    ctx.strokeStyle=color;ctx.lineWidth=1;
+    for(const t of marks)if(t>=left&&t<=end){ctx.beginPath();ctx.moveTo(x(t),top);ctx.lineTo(x(t),bottom);ctx.stroke();}
+  }
+  ctx.strokeStyle='#ddeaff';ctx.beginPath();ctx.moveTo(x(pos),top);ctx.lineTo(x(pos),bottom);ctx.stroke();ctx.restore();
   const segment=r.segments.find(s=>pos>=s.start_ms&&pos<=s.end_ms);
   const time=segment?fmt.format(Date.parse(segment.beijing_start)+pos-segment.start_ms):'无采样';
-  $('clock').textContent=time+' · '+(pos/1000).toFixed(2)+' / '+(r.duration_ms/1000).toFixed(2)+' 秒 · '+r.marks.filter(t=>t<=pos).length+' 个标记';
-  $('seek').value=Math.round(pos);$('play').textContent=playing?'暂停':'播放';
+  $('clock').textContent=time+' · '+(pos/1000).toFixed(2)+' / '+(r.duration_ms/1000).toFixed(2)+' 秒';
+  $('stats').textContent='眨眼标记 '+r.marks.filter(t=>t<=pos).length+' · 补检候选 '+(r.review_marks||[]).filter(t=>t<=pos).length;
+  $('seek').value=Math.round(pos);$('seek').disabled=false;
+  $('play').textContent=pos>=r.duration_ms?'重播':'播放';$('play').disabled=playing;
+  $('pause').disabled=!playing;$('prev').disabled=$('next').disabled=!r.marks.length&&!r.review_marks?.length;
 }
-function frame(now){if(playing&&r){pos=Math.min(r.duration_ms,pos+(now-stamp)*Number($('speed').value));stamp=now;if(pos>=r.duration_ms)playing=false;draw();}requestAnimationFrame(frame);}
-window.addEventListener('resize',draw);requestAnimationFrame(frame);draw();
+window.addEventListener('resize',draw);draw();
 </script>
 </body>
 </html>

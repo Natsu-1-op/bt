@@ -22,7 +22,7 @@ function selectHospitalSessions(sessions){
   return [...selected.values()].sort((a,b)=>Number(subjectOf(a.metadata))-Number(subjectOf(b.metadata)));
 }
 
-function displaySession(b, rows, ref, subject) {
+function displaySession(b, rows, ref, subject, analysis) {
   const m=b.metadata, origin=rows[0][0], elapsed=t=>Math.round(t-origin);
   const runs=[];
   for(const row of rows){
@@ -31,8 +31,8 @@ function displaySession(b, rows, ref, subject) {
       run={id:row[5],first:row[0],last:row[0],utc:row[1],sums:[],counts:[]};runs.push(run);
     }
     run.last=row[0];
-    // 25 Hz display averages, not raw ADC; normalize independently per segment.
-    const i=Math.floor((row[0]-run.first)/40);
+    // 50 Hz display averages of the processed trace; no raw samples or scale.
+    const i=Math.floor((row[0]-run.first)/20);
     run.sums[i]=(run.sums[i]||0)+row[4];run.counts[i]=(run.counts[i]||0)+1;
   }
   const segments=runs.map(run=>{
@@ -41,11 +41,13 @@ function displaySession(b, rows, ref, subject) {
     const center=sorted[Math.floor(sorted.length/2)], span=Math.max(4,
       Math.abs(sorted[Math.floor(sorted.length*.02)]-center),Math.abs(sorted[Math.floor(sorted.length*.98)]-center));
     return {start_ms:elapsed(run.first),end_ms:elapsed(run.last),beijing_start:beijing(run.utc),
-      trace:Array.from(means,v=>Number.isFinite(v)?Math.round(Math.max(-31,Math.min(31,(v-center)*20/span))):null)};
+      trace:Array.from(means,v=>Number.isFinite(v)?Math.round(Math.max(-127,Math.min(127,48*Math.asinh((v-center)/span)))):null)};
   });
+  const times=events=>events.map(e=>elapsed(e.t ?? e.timeline_ms)).sort((a,b)=>a-b);
   return {record:ref, subject, beijing_start:beijing(rows[0][1]),duration_ms:elapsed(rows.at(-1)[0]),
     incomplete:m.status==='interrupted_snapshot', segments,
-    marks:b.events.filter(e=>e.type==='blink').map(e=>elapsed(e.timeline_ms)).sort((a,b)=>a-b)};
+    marks:times(analysis?.primary ?? b.events.filter(e=>e.type==='blink')),
+    review_marks:times(analysis?.recovered ?? [])};
 }
 
 function deliver(inputPath,out,assignments = new Map()) {
@@ -94,11 +96,11 @@ function deliver(inputPath,out,assignments = new Map()) {
       manifest.push({record:ref,subject,original_id:m.id,beijing_start:start,status:m.status,samples:rows.length,
         saved:b.events.filter(e=>e.type==='blink').length,adaptive:primary.length,isolated:recovered.length,
         valid_formal_start:usable,file:path.relative(research,path.join(dir,name))});
-      view.push(displaySession(b,rows,ref,subject));
+      view.push(displaySession(b,rows,ref,subject,{primary,recovered}));
     }
     save(path.join(research,'记录索引.json'),{records:manifest,source_records:data.sessions.length,source_export_skipped:data.skipped||[]});
     view.sort((a,b)=>Number(a.subject)-Number(b.subject));
-    save(path.join(hospital,'播放数据.json'),{schema:'blink-display/v1',step_ms:40,records:view});
+    save(path.join(hospital,'播放数据.json'),{schema:'blink-display/v2',step_ms:20,records:view});
     fs.copyFileSync(path.resolve(__dirname,'../hospital-player.html'),path.join(hospital,'眨眼记录播放器.html'),fs.constants.COPYFILE_EXCL);
     save(path.join(hospital,'使用说明.txt'),'打开播放器，导入同目录的播放数据 JSON。选择一条记录后点击播放，或拖动进度条查看指定时刻。页面时间为北京时间。\n');
     console.log(JSON.stringify({out,privateRecords:manifest.length,hospitalRecords:view.length,
