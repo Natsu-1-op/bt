@@ -101,8 +101,8 @@ function deliver(inputPath,out,assignments = new Map()) {
     save(path.join(research,'记录索引.json'),{records:manifest,source_records:data.sessions.length,source_export_skipped:data.skipped||[]});
     view.sort((a,b)=>Number(a.subject)-Number(b.subject));
     save(path.join(hospital,'播放数据.json'),{schema:'blink-display/v2',step_ms:20,records:view});
-    fs.copyFileSync(path.resolve(__dirname,'../hospital-player.html'),path.join(hospital,'眨眼记录播放器.html'),fs.constants.COPYFILE_EXCL);
-    save(path.join(hospital,'使用说明.txt'),'打开播放器，导入同目录的播放数据 JSON。选择一条记录后点击播放，或拖动进度条查看指定时刻。页面时间为北京时间。\n');
+    fs.copyFileSync(path.resolve(__dirname,'../hp.html'),path.join(hospital,'hp.html'),fs.constants.COPYFILE_EXCL);
+    save(path.join(hospital,'使用说明.txt'),'打开 hp.html，导入同目录的播放数据 JSON。选择一条记录后点击播放，或拖动进度条查看指定时刻。页面时间为北京时间。\n');
     console.log(JSON.stringify({out,privateRecords:manifest.length,hospitalRecords:view.length,
       byDate:manifest.reduce((s,r)=>(s[r.beijing_start.slice(0,10)]=(s[r.beijing_start.slice(0,10)]||0)+1,s),{})}));
   } finally {p.close();}

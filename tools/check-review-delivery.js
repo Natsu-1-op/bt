@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const {validRegion,dynamicIntervals} = require('./review-quality');
 
 const read = file => JSON.parse(fs.readFileSync(file,'utf8'));
 const researchName='研究用_含原始数据_勿外发';
@@ -11,7 +12,7 @@ const segmentKeys=['beijing_start','end_ms','start_ms','trace'];
 function checkDelivery(directory, referenceDirectory){
   const research=path.join(directory,researchName);
   const playback=path.join(directory,hospitalName);
-  const allowedFiles=new Set(['.DS_Store','使用说明.txt','播放数据.json','眨眼记录播放器.html']);
+  const allowedFiles=new Set(['.DS_Store','使用说明.txt','播放数据.json','hp.html','眨眼记录播放器.html']);
   for(const entry of fs.readdirSync(playback,{withFileTypes:true}))
     assert(entry.isFile()&&allowedFiles.has(entry.name),`医院目录含未预期的文件 ${entry.name}`);
 
@@ -34,7 +35,10 @@ function checkDelivery(directory, referenceDirectory){
     assert.equal(String(original.metadata.participant_id),row.subject);
     assert.equal(original.metadata.id,row.original_id);
     assert.equal(original.sample_chunks.reduce((n,chunk)=>n+chunk.rows.length,0),row.samples);
-    assert.deepEqual(Object.keys(view).sort(),recordKeys,`受试者 ${row.subject} 的医院文件有额外字段`);
+    assert.deepEqual(Object.keys(view).filter(k=>k!=='dynamic_error_intervals').sort(),recordKeys,`受试者 ${row.subject} 的医院文件有额外字段`);
+    const regions=bundle.video_calibration?.review_regions??[];
+    assert(regions.every(region=>validRegion(region,view.duration_ms)),`受试者 ${row.subject} 的复核区间无效`);
+    assert.deepEqual(view.dynamic_error_intervals??[],dynamicIntervals(regions),`受试者 ${row.subject} 的动态误差区间不一致`);
     assert.equal(view.duration_ms,Math.round(original.metadata.last_timeline_ms-origin));
     assert(Number.isFinite(Date.parse(view.beijing_start)));
     let previousEnd=-1;

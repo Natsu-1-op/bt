@@ -4,6 +4,7 @@ const path = require('node:path');
 const {loadPage} = require('../tests/helpers/page');
 const {displaySession,beijing} = require('./export-review-delivery');
 const {write} = require('./calibrate-video-delivery');
+const {validRegion,dynamicIntervals} = require('./review-quality');
 
 const read = file => JSON.parse(fs.readFileSync(file,'utf8'));
 
@@ -33,7 +34,12 @@ function sync(source,fitFile,stage,extraFile){
         matched:fit.matched,overlap_ms:fit.overlap_ms,historical_outside_overlap:fit.historical_outside_overlap,
         accepted:fit.accepted,rejected:fit.rejected,confirmed:fit.confirmed,video_only_confirmed:fit.video_only_confirmed,
         remaining:fit.differences,deep_review:fit.deep_review,deep_alignment:fit.deep_alignment,
-        alternate_video:fit.alternate_video,manual_review:fit.manual_review};
+        alternate_video:fit.alternate_video,manual_review:fit.manual_review,review_regions:fit.review_regions};
+      const regions=fit.review_regions??[];
+      assert(regions.every(region=>validRegion(region,view.duration_ms)),`受试者 ${row.subject} 的复核区间无效`);
+      const errors=dynamicIntervals(regions);
+      if(errors.length)view.dynamic_error_intervals=errors;
+      else delete view.dynamic_error_intervals;
       if(fit.calibrated_events){
         input.previous_reanalysis=input.reanalysis;
         input.reanalysis={...input.reanalysis,algorithm:'replay-video-calibrated/v1',calibration_policy:'video-and-sensor-evidence',
@@ -80,6 +86,10 @@ function sync(source,fitFile,stage,extraFile){
   index.records.sort((a,b)=>Number(a.subject)-Number(b.subject));
   assert.equal(playback.records.length,index.records.length);
   write(file,playback);
+  const hospitalDir=path.dirname(file);
+  fs.copyFileSync(path.resolve(__dirname,'../hp.html'),path.join(hospitalDir,'hp.html'));
+  fs.rmSync(path.join(hospitalDir,'眨眼记录播放器.html'),{force:true});
+  fs.writeFileSync(path.join(hospitalDir,'使用说明.txt'),'打开 hp.html，导入同目录的播放数据 JSON。选择一条记录后点击播放，或拖动进度条查看指定时刻。页面时间为北京时间。\n',{mode:0o600});
   write(path.join(stage,researchName,'记录索引.json'),index);
   if(fit.manual_review_report)write(path.join(stage,researchName,'人工复核应用报告.json'),fit.manual_review_report);
   console.log(JSON.stringify({records:index.records.length,videoCalibrated:index.records.filter(r=>r.video_calibration.added!==undefined&&r.video_calibration.pending!==null).length}));

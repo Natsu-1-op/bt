@@ -34,6 +34,16 @@
   <p class="muted">快捷键 1 是眨眼 · 2 非眨眼 · 3 看不清 · N 下一处未标记</p>
   <p id="hint" class="muted" role="status"></p>
 </section>
+<section class="nav">
+  <h2>区间复核</h2>
+  <p class="muted">时间从传感器记录起点算。用进度条定位区间两端，再保存类型。</p>
+  <div class="row">
+    <label>起点（秒） <input id="regionStart" type="number" step=".001" min="0"></label><button id="takeRegionStart">取当前起点</button>
+    <label>终点（秒） <input id="regionEnd" type="number" step=".001" min="0"></label><button id="takeRegionEnd">取当前终点</button>
+  </div>
+  <div class="row"><label>复核类型 <select id="regionKind"><option>人在动</option><option>噪声</option><option>真值</option></select></label><button id="addRegion">保存区间</button></div>
+  <p id="regionStatus" class="muted" role="status"></p><div id="regionList"></div>
+</section>
 <!-- REVIEW_DATA -->
 <script>
 const $=id=>document.getElementById(id);
@@ -41,8 +51,9 @@ const cases=JSON.parse($('cases').textContent), video=$('video'), canvas=$('wave
 const eyeCanvas=$('eyes'), eyeContext=eyeCanvas.getContext('2d');
 const key='blink-local-video-review-v1';
 const alignKey=key+'-alignments';
+const regionStorageKey=key+'-regions';
 function readSaved(name) {try{return JSON.parse(localStorage.getItem(name)||'{}')||{};}catch{return {};}}
-let marks=readSaved(key),alignments=readSaved(alignKey);
+let marks=readSaved(key),alignments=readSaved(alignKey),regions=readSaved(regionStorageKey);
 let row, list=[], selected=-1, position=0, center=0, clipEnd=null, blob=null, pendingSeek=null, offset=null, manualAlign=false;
 const second=ms=>(ms/1000).toFixed(3);
 const fmt=new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',dateStyle:'short',timeStyle:'medium',hourCycle:'h23'});
@@ -54,6 +65,37 @@ const markMatches=(mark,d)=>Number.isFinite(mark?.video_ms)&&Number.isFinite(mar
 const clamp=(v,lo,hi)=>Math.min(hi,Math.max(lo,v));
 const hasOffset=()=>Number.isFinite(offset);
 const option=(label,value)=>new Option(label,String(value));
+const regionKinds=new Set(['人在动','噪声','真值']);
+const regionKey=r=>JSON.stringify([r.record_id,r.kind,r.start_ms,r.end_ms]);
+const savedRegions=()=>Object.values(regions).filter(r=>r?.record_id===row.id);
+function visibleRegions(){
+  const local=savedRegions();
+  const applied=(row.reviewRegions??[]).map(r=>({...r,record_id:row.id,subject:row.subject}));
+  const union=new Map(local.map(r=>[regionKey(r),r]));
+  for(const r of applied)union.set(regionKey(r),{...r,applied:true});
+  return [...union.values()].sort((a,b)=>a.start_ms-b.start_ms);
+}
+
+function validRegion(region,record){
+  return region&&record&&region.subject===record.subject&&regionKinds.has(region.kind)&&
+    Number.isInteger(region.start_ms)&&Number.isInteger(region.end_ms)&&region.start_ms>=0&&
+    region.end_ms>region.start_ms&&region.end_ms<=Math.round(record.duration);
+}
+function showRegions(){
+  const list=$('regionList');list.replaceChildren();
+  for(const region of visibleRegions()){
+    const item=document.createElement('div');item.className='row';
+    const go=document.createElement('button');
+    go.textContent=`${region.kind} · ${second(region.start_ms)} 至 ${second(region.end_ms)} 秒${region.applied?' · 已同步':' · 待同步'}`;
+    go.onclick=()=>jump(region.start_ms);
+    const remove=document.createElement('button');remove.textContent='移除';
+    remove.onclick=()=>{delete regions[regionKey(region)];persistRegions();showRegions();draw();};
+    item.append(go);if(!region.applied)item.append(remove);list.append(item);
+  }
+}
+function persistRegions(){
+  try{localStorage.setItem(regionStorageKey,JSON.stringify(regions));return true;}catch{return false;}
+}
 
 for(const [i,r] of cases.entries()) $('subject').add(option(`${r.subject}号 · ${r.status} · ${r.differences.length}处差异`,i));
 function loadVideo(src) {
@@ -72,6 +114,8 @@ function selectSubject() {
   loadVideo(row.videoUrl);$('file').value='';
   $('videoStatus').textContent=row.videoFile||'暂无已配对视频';
   $('seek').max=Math.ceil(row.duration);$('trial').disabled=!row.trial;$('trial').checked=false;
+  for(const id of ['regionStart','regionEnd']){$(id).value='';$(id).max=Math.round(row.duration)/1000;}
+  $('regionStatus').textContent='';showRegions();
   $('trial').parentElement.hidden=!row.trial;
   for(const opt of $('filter').options)if(opt.value.startsWith('试算'))opt.hidden=!row.trial;
   if($('filter').selectedOptions[0]?.hidden)$('filter').value='';
@@ -147,6 +191,12 @@ function draw() {
     const t=from+span*i/4;ctx.fillText((t/1000).toFixed(2),Math.min(right-31,x(t)-5),h-7);
   }
   ctx.save();ctx.beginPath();ctx.rect(left,top,right-left,bottom-top);ctx.clip();
+  for(const region of visibleRegions()){
+    if(region.end_ms<=from||region.start_ms>=to)continue;
+    ctx.fillStyle={'真值':'rgba(66,210,159,.15)','人在动':'rgba(248,167,78,.18)','噪声':'rgba(175,137,248,.19)'}[region.kind];
+    const start=x(Math.max(from,region.start_ms));
+    ctx.fillRect(start,top,x(Math.min(to,region.end_ms))-start,bottom-top);
+  }
   const line=(t,color,topY=top)=>{if(t<from||t>to)return;ctx.strokeStyle=color;ctx.beginPath();ctx.moveTo(x(t),topY);ctx.lineTo(x(t),bottom);ctx.stroke();};
   for(const e of row.aligned||row.adaptive.length?row.adaptive:row.original)line(e,'#b8903d');
   for(const e of row.candidates)line(e,'#6b7a89',top+22);
@@ -277,7 +327,8 @@ $('importMarks').onchange=async()=>{
   try{
     if(file.size>4*1024*1024)throw Error('标记文件过大。');
     const data=JSON.parse(await file.text());
-    if(!['blink-video-review-labels/v1','blink-video-review-labels/v2'].includes(data.schema)||!Array.isArray(data.marks))throw Error('请选择复核标记 JSON。');
+    if(!['blink-video-review-labels/v1','blink-video-review-labels/v2','blink-video-review-labels/v3'].includes(data.schema)||!Array.isArray(data.marks)||
+      (data.schema.endsWith('/v3')&&!Array.isArray(data.regions)))throw Error('请选择复核标记 JSON。');
     const merged={...marks};let added=0,skipped=0;
     for(const mark of data.marks){
       const record=cases.find(r=>r.id===mark?.record_id&&r.subject===mark.subject&&r.videoFile===mark.video_file);
@@ -288,8 +339,14 @@ $('importMarks').onchange=async()=>{
       merged[id]=mark;added++;
     }
     marks=merged;
+    for(const region of Array.isArray(data.regions)?data.regions:[]){
+      const record=cases.find(r=>r.id===region?.record_id);
+      if(!validRegion(region,record)){skipped++;continue;}
+      regions[regionKey(region)]=region;added++;
+    }
     let saved=true;try{localStorage.setItem(key,JSON.stringify(marks));}catch{saved=false;}
-    if(row)refreshList(list[selected]);
+    saved=persistRegions()&&saved;
+    if(row){refreshList(list[selected]);showRegions();draw();}
     status.textContent=`已载入 ${added} 条，跳过 ${skipped} 条不匹配或有冲突的标记。${saved?'':'请保存标记文件。'}`;
   }catch(error){status.textContent=error.message;}
   finally{$('importMarks').value='';}
@@ -300,7 +357,20 @@ function saveJson(name,data){
 }
 $('export').onclick=()=>{
   const current=cases.flatMap(record=>record.differences.map(d=>marks[markKey(d,record)]).filter(Boolean));
-  saveJson('视频复核标记.json',{schema:'blink-video-review-labels/v2',marks:current});
+  const currentRegions=Object.values(regions).filter(region=>validRegion(region,cases.find(r=>r.id===region?.record_id)));
+  saveJson('视频复核标记.json',{schema:'blink-video-review-labels/v3',marks:current,regions:currentRegions});
+};
+$('takeRegionStart').onclick=()=>{$('regionStart').value=second(position);};
+$('takeRegionEnd').onclick=()=>{$('regionEnd').value=second(position);};
+$('addRegion').onclick=()=>{
+  if(!row)return;
+  const start=$('regionStart'),end=$('regionEnd');
+  const region={record_id:row.id,subject:row.subject,kind:$('regionKind').value,
+    start_ms:Math.round(start.valueAsNumber*1000),end_ms:Math.round(end.valueAsNumber*1000)};
+  if(!validRegion(region,row)){$('regionStatus').textContent='请填写记录范围内的起止时间，终点须晚于起点。';return;}
+  regions[regionKey(region)]=region;
+  $('regionStatus').textContent=persistRegions()?'区间已保存。':'请导出复核标记以保存区间。';
+  showRegions();draw();
 };
 $('exportAlign').onclick=()=>saveJson('对时修正.json',Object.fromEntries(Object.values(alignments).map(({subject,video,offset_ms})=>[subject,{video,offset_ms}])));
 window.addEventListener('resize',draw);

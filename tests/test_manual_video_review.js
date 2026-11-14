@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const {applyMarks} = require('../tools/apply-video-review');
+const {dynamicIntervals} = require('../tools/review-quality');
 
 const first=1000;
 const sensorEvent={t:1500,utcMs:5000,width:70,amp:12,threshold_counts:8,polarity:'fall'};
@@ -28,4 +29,11 @@ const conflicting=applyMarks(batch,[file(mark(0,'是眨眼')),file(mark(0,'非�
 assert.equal(conflicting.report.applied,0);
 assert.equal(conflicting.report.issues.length,2);
 assert.equal(conflicting.report.remaining,4);
+const region=(kind,start_ms,end_ms)=>({record_id:row.record_id,subject:row.subject,kind,start_ms,end_ms});
+const reviewed=applyMarks(batch,[{schema:'blink-video-review-labels/v3',marks:[],regions:[region('人在动',300,600),region('噪声',500,800),
+  region('真值',1000,1400),region('噪声',0,5000)]}],()=>({...original,original:{metadata:{first_timeline_ms:first,last_timeline_ms:4000}}}),()=>null);
+assert.equal(reviewed.report.regions_applied,3);
+assert.equal(reviewed.report.issues.length,1);
+assert.deepEqual(dynamicIntervals(reviewed.batch.results[0].review_regions),[[300,800]]);
+assert.deepEqual(reviewed.batch.results[0].calibrated_marks,[]);
 console.log('PASS manual review round-trip rules, conflicts and timing checks');

@@ -3,6 +3,7 @@ const path = require('node:path');
 const {sensorTracks} = require('../video-review');
 const {loadPage} = require('../tests/helpers/page');
 const {trialEvents} = require('./calibrate-video-delivery');
+const {validRegion} = require('./review-quality');
 
 const read = file => JSON.parse(fs.readFileSync(file,'utf8'));
 const decisions = new Set(['是眨眼','非眨眼','看不清']);
@@ -12,10 +13,27 @@ function applyMarks(input, files, loadRecord, findResponse){
   const batch=structuredClone(input);
   const records=new Map(batch.results.map(r=>[r.record_id,r]));
   const marks=new Map();
+  const regions=new Map();
   const issues=[];
+  const sourceRecords=new Map();
+  const source=row=>{
+    if(!sourceRecords.has(row.record_id))sourceRecords.set(row.record_id,loadRecord(row));
+    return sourceRecords.get(row.record_id);
+  };
   for(const file of files){
-    if(!['blink-video-review-labels/v1','blink-video-review-labels/v2'].includes(file.schema)||!Array.isArray(file.marks))
+    if(!['blink-video-review-labels/v1','blink-video-review-labels/v2','blink-video-review-labels/v3'].includes(file.schema)||
+      !Array.isArray(file.marks)||((file.schema.endsWith('/v3')||file.regions!==undefined)&&!Array.isArray(file.regions)))
       throw Error('请选择有效的复核标记文件。');
+    for(const region of file.regions??[]){
+      const row=records.get(region?.record_id);
+      if(!row||row.subject!==region.subject){issues.push({region,reason:'区间与受试者记录不匹配'});continue;}
+      const meta=source(row).original.metadata;
+      if(!validRegion(region,Math.round(meta.last_timeline_ms-meta.first_timeline_ms))){
+        issues.push({region,reason:'区间范围或类型无效'});continue;
+      }
+      const {kind,start_ms,end_ms}=region;
+      regions.set(JSON.stringify([row.record_id,kind,start_ms,end_ms]),{row,region:{kind,start_ms,end_ms}});
+    }
     for(const mark of file.marks){
       const row=records.get(mark?.record_id);
       if(!row||row.subject!==mark.subject||row.video_file!==mark.video_file||!decisions.has(mark.decision)){
@@ -37,15 +55,19 @@ function applyMarks(input, files, loadRecord, findResponse){
     }
   }
 
-  let applied=0,kept=0;
-  const sourceRecords=new Map();
+  let applied=0,kept=0,regionsApplied=0;
+  for(const {row,region} of regions.values()){
+    const current=row.review_regions??=[];
+    if(current.some(r=>r.kind===region.kind&&r.start_ms===region.start_ms&&r.end_ms===region.end_ms))continue;
+    current.push(region);regionsApplied++;
+    current.sort((a,b)=>a.start_ms-b.start_ms||a.end_ms-b.end_ms);
+  }
   const ordered=[...marks.values()].sort((a,b)=>Number(a.difference.type==='仅视频')-Number(b.difference.type==='仅视频'));
   for(const {row,difference,decisions:choices} of ordered){
     if(choices.size!==1){issues.push({subject:row.subject,difference,reason:'多个文件对同一事件给出了不同判定'});continue;}
     const [decision]=choices;
     if(decision==='看不清'){kept++;continue;}
-    if(!sourceRecords.has(row.record_id))sourceRecords.set(row.record_id,loadRecord(row));
-    const bundle=sourceRecords.get(row.record_id);
+    const bundle=source(row);
     const origin=bundle.original.metadata.first_timeline_ms;
     const time=difference.sensor;
     const candidates=row.candidate_marks;
@@ -88,7 +110,7 @@ function applyMarks(input, files, loadRecord, findResponse){
     (row.manual_review??=[]).push({difference:{type:difference.type,video:difference.video,sensor:time},decision,action});
     applied++;
   }
-  return {batch,report:{applied,kept,issues,remaining:batch.results.reduce((n,r)=>n+(r.differences?.length??0),0)}};
+  return {batch,report:{applied,regions_applied:regionsApplied,kept,issues,remaining:batch.results.reduce((n,r)=>n+(r.differences?.length??0),0)}};
 }
 
 function main(){
@@ -111,7 +133,7 @@ function main(){
         track.coverage.some(r=>r.from<=e.ms-120&&r.to>=e.ms+160))
         .sort((a,b)=>b.factor-a.factor||Math.abs(a.ms-difference.sensor)-Math.abs(b.ms-difference.sensor))[0]?.event;
     });
-    if(!result.report.applied)throw Error('没有可应用的标记。 '+JSON.stringify(result.report));
+    if(!result.report.applied&&!result.report.regions_applied)throw Error('没有可应用的标记。 '+JSON.stringify(result.report));
     fs.writeFileSync(output,JSON.stringify({...result.batch,manual_review_report:result.report}),{flag:'wx',mode:0o600});
     console.log(JSON.stringify({...result.report,issues:result.report.issues.length}));
   }finally{app.close();}

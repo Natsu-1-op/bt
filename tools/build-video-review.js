@@ -75,7 +75,7 @@ function build(researchDir,videoDir,batchFile,out) {
         videoUrl:videoFile?pathToFileURL(path.join(videoDir,videoFile)).href:null, offset, aligned:result.alignment?.reliable===true,
         duration:rows.at(-1)[0]-rows[0][0], utc:track.first_utc_ms,
         differences, original:track.events.map(e=>e.ms), adaptive:result.calibrated_marks??(track.reanalysis??[]).filter(e=>e.source==='adaptive').map(e=>e.ms),
-        candidates:result.candidate_marks??[], alignedCoverage:result.overlap_ms,
+        candidates:result.candidate_marks??[], alignedCoverage:result.overlap_ms, reviewRegions:result.review_regions??[],
         automatic:calibrated?{added:result.accepted?.length??0,removed:result.rejected?.length??0,
           confirmed:result.confirmed?.length??0,videoOnly:result.video_only_confirmed?.length??0,
           reviewed:result.deep_review?.length??0}:null,

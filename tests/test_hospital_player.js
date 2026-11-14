@@ -3,7 +3,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const {JSDOM}=require('jsdom');
 const {displaySession,beijing,selectHospitalSessions}=require('../tools/export-review-delivery');
-const file=path.resolve(__dirname,'../hospital-player.html');
+const file=path.resolve(__dirname,'../hp.html');
 const html=fs.readFileSync(file,'utf8');
 const session=(subject,created,ms,status='user_stop')=>({metadata:{participant_id:subject,created_utc_ms:created,status,
   config:{},detector:{calibrated_timeline_ms:3000},segments:[{start_timeline_ms:0,end_timeline_ms:ms}]}});
@@ -37,6 +37,7 @@ try{
   const $=id=>w.document.getElementById(id);
   api.open(payload);api.seek(120);
   assert.match($('stats').textContent,/眨眼标记 1/);
+  assert.equal($('quality').textContent,'正常');
   assert(!/R001/.test($('record').textContent),'technical record ID is not displayed');
   $('play').click();tick(200);
   assert.equal(api.state().pos,320);
@@ -52,5 +53,10 @@ try{
   $('play').click();assert.equal(api.state().pos,0);
   api.open({schema:'blink-display/v1',step_ms:40,records:[{...rec,segments:[{...rec.segments[0],trace:[-31,0,31]}]}]});
   assert.equal(api.state().playing,false,'old display files still load');
+  api.open({...payload,records:[{...rec,dynamic_error_intervals:[[300,700],[1000,2000]]}]});
+  for(const [t,expected] of [[299,'正常'],[300,'动态误差'],[699,'动态误差'],[700,'正常'],[1000,'动态误差'],[2000,'动态误差']]){
+    api.seek(t);assert.equal($('quality').textContent,expected);
+  }
+  assert.throws(()=>api.validateDisplay({...payload,records:[{...rec,dynamic_error_intervals:[[300,700],[600,800]]}]}),/动态误差区间无效/);
 }finally{w.close();}
 console.log('PASS separate hospital page: display-only data, waveform/seek, original file rejected');

@@ -17,7 +17,7 @@ if(fs.existsSync(oldRules)){
   fs.renameSync(oldRules,path.join(recovery,'database.rules.json'));
   console.log('Moved obsolete delivery rules copy to '+recovery);
 }
-const files=['index.html','test.html','blink-app.js','admin.html','video-review.js','hospital-player.html','package.json','package-lock.json','RELEASE.md'];
+const files=['index.html','test.html','blink-app.js','admin.html','video-review.js','hp.html','hospital-player.html','package.json','package-lock.json','RELEASE.md'];
 function copy(rel,filter){fs.cpSync(path.join(root,rel),path.join(dest,rel),{recursive:true,...(filter?{filter}:{})});}
 // AI-SYNC 里的 evidence-* 是屏幕截图（数 MB，含桌面内容），不该随交付包外发。
 const skipEvidence=src=>!/^evidence-/.test(path.basename(src));
@@ -27,7 +27,7 @@ for(const rel of ['tools/run-page.js','tools/test-all.js','tools/package-release
   'tools/review-video-batch.js','tools/mediapipe-video.py','tools/export-review-delivery.js',
   'tools/calibrate-video-delivery.js','tools/fit-video-review.js','tools/sync-calibrated-delivery.js',
   'tools/build-video-review.js','tools/video-review-workbench.html','tools/deep-video-review.js','tools/review-eye-evidence.py',
-  'tools/apply-video-review.js','tools/publish-video-review.js','tools/check-review-delivery.js'])copy(rel);
+  'tools/apply-video-review.js','tools/publish-video-review.js','tools/check-review-delivery.js','tools/review-quality.js'])copy(rel);
 function assertNoRules(dir){
   for(const e of fs.readdirSync(dir,{withFileTypes:true})){
     if(e.name==='database.rules.json')throw new Error('Rules file must not be present in delivery folder: '+path.join(dir,e.name));
