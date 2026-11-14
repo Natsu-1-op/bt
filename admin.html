@@ -18,7 +18,7 @@ input[type=number]{width:7em}button:disabled{opacity:.5}video{display:block;widt
 </head>
 <body>
 <h1>视频眨眼对照</h1>
-<p>打开同一位受试者的视频和研究记录。视频在本机处理；加载检测模型需要网络。</p>
+<p>选择同一受试者的录像和研究数据。视频在本机处理，检测模型需联网加载。</p>
 <section>
 <div class="row">
 <label>现场视频<input id="reviewVideo" type="file" accept="video/*,.mp4,.mov"></label>
@@ -30,7 +30,7 @@ input[type=number]{width:7em}button:disabled{opacity:.5}video{display:block;widt
 <label>视频第 0 秒的北京时间
 <input id="reviewStartTime" type="datetime-local" step=".001">
 </label>
-<p>填实际拍摄时间，不用文件修改时间。视频与记录不必同时开始，系统只分析重叠片段。若只知道视频中某一帧的时间，可用下方选项。</p>
+<p>填写实际拍摄时间。系统会分析录像和采集的重叠部分。</p>
 <div id="reviewCues" hidden>
 <h2 style="font-size:1rem">用两次同步闪光对时</h2>
 <p id="reviewCueText"></p>
@@ -39,7 +39,7 @@ input[type=number]{width:7em}button:disabled{opacity:.5}video{display:block;widt
 <label>最后一次闪光（秒）<input id="reviewCueLast" type="number" min="0" step=".001"></label><button id="reviewSetLast">取当前位置</button>
 </div></div>
 <details>
-<summary>从视频某一帧对齐，或限制分析范围</summary>
+<summary>更多对时与分析选项</summary>
 <div class="row" style="margin-top:10px">
 <label>上述北京时间对应视频第几秒<input id="reviewAnchor" type="number" value="0" min="0" step=".001"></label>
 <button id="reviewUseTime">取当前播放位置</button>

@@ -1,8 +1,7 @@
-// 本地静态服务器，只为在 http://localhost 下打开 index.html。
+// 本地预览采集、调试、视频对照和医院播放器。
 //
 // 为什么需要它：Web Bluetooth 要求「安全上下文」——
 //   https:// 和 http://localhost 都算，file:// 不算（局域网 http://10.x 也不算）。
-// 只想看波形、不连设备的话，用页面里的「演示模式（无设备）」按钮即可，不需要蓝牙。
 //
 // 用法:  node tools/serve-page.js        （默认 8000，可用 PORT=8001 覆盖）
 const http = require('http');
@@ -11,15 +10,12 @@ const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const PORT = Number(process.env.PORT) || 8000;
+const publicFiles = new Set(['/index.html','/test.html','/admin.html','/hp.html','/blink.css','/blink-app.js','/video-review.js']);
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.hex': 'text/plain; charset=utf-8',
-  '.md': 'text/plain; charset=utf-8',
-  '.zip': 'application/zip',
 };
 
 const server = http.createServer((req, res) => {
@@ -27,7 +23,6 @@ const server = http.createServer((req, res) => {
   try { rel = decodeURIComponent((req.url || '/').split('?')[0]); } catch (_) { rel = '/'; }
   if (rel === '/' || rel === '') rel = '/index.html';
   // Explicit public assets only: never serve Git, rules, backups or symlinks.
-  const publicFiles = new Set(['/index.html','/test.html','/admin.html','/blink-app.js']);
   if (!publicFiles.has(rel)) { res.writeHead(403); res.end('403 forbidden'); return; }
 
   // 归一化后确认仍在 ROOT 之内，防止 ../ 穿越
@@ -62,5 +57,4 @@ server.on('error', (e) => {
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`本机打开:   http://localhost:${PORT}/`);
-  console.log('看波形: 点页面底部「演示模式（无设备）」，再切换右上角「纵轴自动量程」复选框对比。');
 });

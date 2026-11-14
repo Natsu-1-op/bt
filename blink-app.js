@@ -654,13 +654,11 @@
     ui.debugReadout.textContent = thresholdDeciderText();
   }
 
-  function setDebugGateStatus(text) {
-    if (ui.debugGateStatus) ui.debugGateStatus.textContent = text;
-  }
-
+  function setDebugGateStatus(text) { ui.debugGateStatus.textContent = text; }
   // Console access is password-only. No BLE query, hardware state or polling.
   function lockDebugPanel(message = '') {
     ui.debugPanel.classList.add('hidden');
+    if (isConsolePage) ui.appTitle.setAttribute('aria-expanded','false');
     setDebugGateStatus(message);
   }
 
@@ -671,6 +669,7 @@
       return;
     }
     ui.debugPanel.classList.remove('hidden');
+    ui.appTitle.setAttribute('aria-expanded','true');
     setDebugGateStatus('');
     updateDebugControls();
   }
@@ -807,7 +806,7 @@
   ui.oledImagePreview.addEventListener('pointercancel', finishOledImageDrag);
   ui.btnOledImageClear.onclick = clearOledImage;
   clearOledImagePreview();
-  ui.btnDebugClose.onclick = () => lockDebugPanel('点击标题可重新显示调试台');
+  ui.btnDebugClose.onclick = () => lockDebugPanel('点击标题重新打开采集设置');
   setDebugGateStatus('');
   updateDebugControls();
 
@@ -2447,6 +2446,10 @@
 
   ui.btnFull.onclick = () => { if (!S.busy) { fillRangeInputs(); analyze().catch(console.error); } };
   ui.btnAnalyze.onclick = () => { if (!S.busy) analyze().catch(console.error); };
+  const frequencyPanel = document.getElementById('frequencyPanel');
+  if (frequencyPanel) frequencyPanel.addEventListener('toggle', () => {
+    if (frequencyPanel.open && S.session && !S.busy) analyze().catch(console.error);
+  });
 
   // fixedDrop：这次会话实时判决时真正用过的阈值。传了就【直接用它】，不再自己重算 ——
   // 方案 C（现场眨眼标定）定出来的阈值是量出来的，离线这条路上没有眨眼标定那一段数据，
@@ -3222,22 +3225,21 @@
   dataPanel.className='card data-workbench';
   dataPanel.id='dataWorkbench';
   dataPanel.innerHTML=`
-    <div class="data-heading"><h2>数据回放</h2><span class="data-badge">仅本机处理</span></div>
-    <p class="tiny">导入已导出的数据，或打开本机记录，在上方波形中回放。不会修改原始数据。</p>
+    <div class="data-heading"><h2>记录与回放</h2></div>
     <div class="data-grid">
-      <div class="data-block"><h3>① 导入数据</h3>
+      <div class="data-block"><h3>导入数据</h3>
         <label for="importFile">选择数据文件</label>
         <input id="importFile" type="file" accept=".json,application/json">
-        <p class="tiny">支持单条 / 全部数据 · 最大 128 MiB、250 万采样点 · 大文件建议用电脑 · 重复导入保留独立副本</p>
+        <p class="tiny">支持单条或整批数据，最大 128 MiB。</p>
         <button id="btnImport" type="button" class="ghost">导入到本机</button>
         <p id="importStatus" class="tiny" role="status"></p>
       </div>
-      <div class="data-block"><h3>② 打开记录</h3>
+      <div class="data-block"><h3>本机记录</h3>
         <div id="replayRecords"></div>
       </div>
     </div>
     <div class="replay-bar">
-      <div class="replay-title"><h3>③ 波形重放</h3><span id="replayRecordName" class="tiny">请先打开一条记录</span></div>
+      <div class="replay-title"><span id="replayRecordName" class="tiny">请先打开一条记录</span></div>
       <div class="replay-actions">
         <button id="btnReplay" type="button" class="primary">开始重放</button>
         <button id="btnReplayStop" type="button" class="ghost">退出重放</button>
@@ -3245,8 +3247,8 @@
       </div>
       <label class="tiny" for="replaySeek">拖动定位</label>
       <input id="replaySeek" type="range" min="0" max="0" step="1" value="0">
-      <p id="replayStatus" class="tiny">打开记录后开始重放；原始事件不等同于人工真值。</p>
-      <details class="trial-panel"><summary>试调阈值 · 原始参数保留</summary>
+      <p id="replayStatus" class="tiny">打开记录后开始重放。</p>
+      <details class="trial-panel"><summary>试调阈值</summary>
         <div class="trial-fields"><label>下降阈值（ADC）<input id="trialDrop" type="number" min="0" max="4095" step="0.1"></label><label>最短间隔（ms）<input id="trialRefractory" type="number" min="0" max="10000" step="10"></label></div>
         <p id="trialStatus" class="tiny" role="status">先开始重放，再修改参数；修改仅用于当前记录试算，不用于正在采集的数据。</p>
         <details><summary>查看原始阈值及完整参数</summary><pre id="originalReplayConfig" class="tiny"></pre></details>

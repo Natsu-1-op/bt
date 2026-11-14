@@ -17,11 +17,12 @@ if(fs.existsSync(oldRules)){
   fs.renameSync(oldRules,path.join(recovery,'database.rules.json'));
   console.log('Moved obsolete delivery rules copy to '+recovery);
 }
-const files=['index.html','test.html','blink-app.js','admin.html','video-review.js','hp.html','hospital-player.html','package.json','package-lock.json','RELEASE.md'];
+const files=['index.html','test.html','blink.css','blink-app.js','admin.html','video-review.js','hp.html','hospital-player.html','package.json','package-lock.json','RELEASE.md'];
 function copy(rel,filter){fs.cpSync(path.join(root,rel),path.join(dest,rel),{recursive:true,...(filter?{filter}:{})});}
 // AI-SYNC 里的 evidence-* 是屏幕截图（数 MB，含桌面内容），不该随交付包外发。
 const skipEvidence=src=>!/^evidence-/.test(path.basename(src));
 for(const rel of [...files,'tests'])copy(rel);
+fs.rmSync(path.join(dest,'tests','test_timeline.js'),{force:true});
 copy('AI-SYNC',skipEvidence);
 for(const rel of ['tools/run-page.js','tools/test-all.js','tools/package-release.js','tools/serve-page.js',
   'tools/review-video-batch.js','tools/mediapipe-video.py','tools/export-review-delivery.js',

@@ -5,90 +5,11 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#07111f">
 <title>眨眼调试台</title>
+<link rel="stylesheet" href="blink.css?v=20261114-3">
 <style>
-  :root{
-    color-scheme:dark;
-    --bg:#07111f; --card:#0e1b2d; --line:#1d3048; --text:#e5eefb; --muted:#8ea3bd;
-    --ok:#38d996; --warn:#f4bf4f; --bad:#ff6679; --blue:#6ca9ff; --violet:#b58cff;
-  }
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--text);
-       font:15px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-  main{max-width:960px;margin:0 auto;padding:12px 12px 40px}
-  h1{margin:0;font-size:19px;color:var(--ok);user-select:none;touch-action:manipulation}
-  h2{margin:0 0 10px;font-size:14px;color:var(--text);font-weight:700}
-  .sub{color:var(--muted);font-size:11.5px;margin-top:3px}
-  header{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;margin-bottom:10px}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px;margin-bottom:10px}
-  button{border:1px solid #315274;background:#172b43;color:var(--text);border-radius:8px;
-         padding:10px 12px;font:inherit;font-size:13px;font-weight:700;touch-action:manipulation;cursor:pointer}
-  button:disabled{opacity:.38;cursor:not-allowed}
-  button.primary{background:#087c57;border-color:#21b77f}
-  button.warn{background:#7a5511;border-color:#c9962e}
-  button.danger{background:#6a2635;border-color:#c64b62}
-  button.ghost{background:#12203a}
-  .top{display:flex;align-items:center;gap:8px}
-  .dot{width:9px;height:9px;border-radius:50%;background:var(--bad);flex:0 0 auto}
-  .dot.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
-  #conn{color:var(--muted);font-size:12px;flex:1;min-width:0}
-  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
-  .metric{border:1px solid var(--line);background:#091525;border-radius:8px;padding:9px;min-width:0}
-  .metric label{display:block;color:var(--muted);font-size:11px;margin-bottom:4px}
-  .metric strong{display:block;font-size:17px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .good{color:var(--ok)} .warnc{color:var(--warn)} .badc{color:var(--bad)} .bluec{color:var(--blue)}
-  .scope{height:300px;padding:0;overflow:hidden;position:relative}
-  .scope canvas{width:100%;height:100%;display:block}
-  .legend{position:absolute;right:8px;top:8px;background:#07111fdd;border:1px solid var(--line);
-          border-radius:6px;padding:6px 8px;color:var(--muted);font-size:10.5px;line-height:1.6;pointer-events:none}
-  .legend label{pointer-events:auto;cursor:pointer;display:inline-flex;align-items:center;gap:4px;user-select:none;color:var(--text)}
-  .cloud-gate{position:fixed;inset:0;background:#03070ddd;display:flex;align-items:center;justify-content:center;z-index:50;padding:20px}
-  .cloud-box{background:#0b1524;border:1px solid var(--line);border-radius:12px;padding:20px 22px;max-width:360px;width:100%;text-align:center}
-  .cloud-box h3{margin:0 0 8px;font-size:16px;color:var(--text)}
-  .cloud-spin{width:28px;height:28px;margin:2px auto 14px;border:3px solid #24405f;border-top-color:#38d996;border-radius:50%;animation:cloudspin .9s linear infinite}
-  @keyframes cloudspin{to{transform:rotate(360deg)}}
-  .cloud-actions{display:none;gap:8px;margin-top:14px}
-  .cloud-actions.show{display:flex}
-  .cloud-actions button{flex:1 1 0}
-  .controls{display:flex;gap:8px;flex-wrap:wrap}
-  .controls button{flex:1 1 118px}
-  .note{color:var(--muted);font-size:11.5px;line-height:1.6;margin:9px 0 0}
-  .note b{color:var(--text)}
-  .fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:9px}
-  .field{background:#091525;border:1px solid var(--line);border-radius:8px;padding:8px;min-width:0}
-  .field label{display:block;color:var(--muted);font-size:11px;margin-bottom:4px}
-  .field input,.field select,.field textarea{width:100%;background:#0e1b2d;border:1px solid #2a3f5c;color:var(--text);
-          border-radius:6px;padding:6px;font:inherit;font-size:13px}
-  .field textarea{min-height:58px;resize:vertical;line-height:1.35}
-  .oled-preview{display:block;width:256px;max-width:100%;height:64px;image-rendering:pixelated;
-                background:#000;border:1px solid #2a3f5c;border-radius:6px;margin-top:0;
-                touch-action:none;cursor:grab;user-select:none}
-  .oled-preview.dragging{cursor:grabbing}
-  .oled-image-editor{width:256px;max-width:100%;margin-top:7px}
-  .oled-image-tools{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:6px}
-  .oled-image-tools button{padding:6px 9px;font-size:11px}
-  #freqWrap{height:200px;position:relative;border:1px solid var(--line);border-radius:8px;background:#050b13;overflow:hidden}
-  #freqWrap canvas{width:100%;height:100%;display:block}
-  .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:9px;color:var(--muted);font-size:11.5px}
-  .summary div{background:#091525;border-radius:6px;padding:7px}
-  .summary b{color:var(--text);display:block;font-size:15px;margin-top:2px}
-  .tiny{color:var(--muted);font-size:11px}
-  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-  .hidden{display:none !important}
-  .field input[type="checkbox"]{width:auto;vertical-align:middle;margin:0 6px 0 0}
-  /* 手机端：统计卡片保留两列，录入项统一单列，避免同一组表单忽两列忽一列。 */
-  @media (max-width:860px){
-    .fields{grid-template-columns:repeat(2,minmax(0,1fr))}
-  }
-  @media (max-width:620px){
-    .grid{grid-template-columns:repeat(2,1fr)}
-    .summary{grid-template-columns:repeat(2,1fr)}
-    .fields{grid-template-columns:1fr}
-    .scope{height:250px}
-  }
   .data-workbench{padding:16px}
-  .data-heading,.replay-title{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  .replay-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   .data-heading h2,.data-workbench h3{margin:0;font-size:14px}
-  .data-badge{font-size:11px;color:var(--ok);padding:3px 9px;background:#10372e;border-radius:20px}
   .data-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:12px;margin-top:14px}
   .data-block{min-width:0;padding:14px;background:#091525;border:1px solid var(--line);border-radius:10px}
   .data-block h3{margin-bottom:12px;color:var(--blue)}
@@ -123,23 +44,18 @@
   .trial-fields input{width:100%;min-width:0}
   .trial-actions button{font-size:11px;padding:8px}
   #originalReplayConfig{white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto}
-  @media(max-width:600px){.replay-viewport .scope{height:clamp(130px,28svh,230px)}.replay-viewport .replay-title h3{display:none}.replay-viewport .replay-title{gap:0}.replay-focused .replay-viewport{position:sticky;top:0;z-index:10;max-height:100svh;overflow:auto}.replay-viewport .replay-speed{grid-column:auto}.replay-viewport #replaySeek{margin:2px 0;min-height:30px}}
+  @media(max-width:600px){.replay-viewport .scope canvas{height:clamp(130px,28svh,230px)}.replay-focused .replay-viewport{position:sticky;top:0;z-index:10;max-height:100svh;overflow:auto}.replay-viewport .replay-speed{grid-column:auto}.replay-viewport #replaySeek{margin:2px 0;min-height:30px}}
 </style>
 </head>
 <body data-page="console">
 <main>
   <header>
     <div>
-      <h1 id="appTitle">调试台</h1>
-      <div class="sub">输入管理员密码即可使用调试台；采集与升级时再连接设备。<span id="debugGateStatus"></span></div>
+      <h1><button id="appTitle" type="button" aria-controls="debugPanel" aria-expanded="false">调试台</button></h1>
+      <div class="top"><span id="dot" class="dot"></span><span id="conn">请先连接采集设备。</span></div><span id="debugGateStatus" class="tiny"></span>
     </div>
     <button id="btnConn" class="primary">连接设备</button>
   </header>
-
-  <section class="card top">
-    <span id="dot" class="dot"></span>
-    <span id="conn">请先连接采集设备。</span>
-  </section>
 
   <section class="grid" style="margin-bottom:10px">
     <div class="metric"><label>状态</label><strong id="mState" class="badc">待机</strong></div>
@@ -149,14 +65,16 @@
   </section>
 
   <section class="card scope">
-    <canvas id="scope"></canvas>
+    <canvas id="scope" aria-label="采集波形"></canvas>
     <div class="legend">
-      <label><input id="autoRange" type="checkbox" checked>纵轴自动量程</label><br>
-      绿：处理后波形<br>灰：原始波形<br>红/蓝：识别范围<br>黄线：已识别眨眼
+      <span style="--series:#38d996">处理后</span><span style="--series:#8ea3bd">原始</span><span style="--series:#f4bf4f">眨眼标记</span>
+      <label><input id="autoRange" type="checkbox" checked>自动量程</label>
     </div>
   </section>
 
-  <section class="card">
+  <p class="note console-feedback" id="help" role="status"></p>
+  <details class="card">
+    <summary>现场采集</summary>
     <div class="controls">
       <button id="btnStart" class="primary" disabled>开始测试</button>
       <button id="btnPause" class="warn" disabled>暂停测试</button>
@@ -164,55 +82,42 @@
       <button id="btnExportBundle" class="ghost" disabled>导出数据</button>
       <button id="btnClear" class="ghost" disabled>清除当前内容</button>
     </div>
-    <p class="note" id="help">
-      连接后先佩戴并观察波形是否平稳。填写测试信息后点 <b>开始测试</b>；开始后的约 3 秒内请睁眼并尽量保持自然状态。
-      测试结束后，请在上方点击“导出数据”保存本次测试文件。
-    </p>
-  </section>
-
-  <section class="card">
-    <h2>测试信息</h2>
-    <details><summary>与录像对时（可选）</summary>
+    <p class="note">佩戴后等波形稳定再开始。准备时请保持睁眼，结束后导出数据。</p>
+    <div class="fields">
+      <div class="field"><label for="subjectId">受试者编号</label><input id="subjectId" type="text" maxlength="64" placeholder="例如 26"></div>
+      <div class="field"><label for="deviceId">设备编号</label><input id="deviceId" type="text" maxlength="64" placeholder="例如 EOG-01"></div>
+      <div class="field"><label for="operatorId">操作者</label><input id="operatorId" type="text" maxlength="64" placeholder="姓名或编号"></div>
+      <div class="field"><label for="condition">测试备注</label><input id="condition" type="text" maxlength="160" placeholder="例如 常规测试"></div>
+    </div>
+    <details><summary>与录像对时</summary>
       <p class="note">让录像拍到下方提示区，在计数开始后和结束前各点一次。闪光会记在本次数据里。</p>
       <button id="btnVideoSync" class="ghost" disabled>发出同步闪光</button>
       <div id="videoSyncCue" role="status" style="min-height:3rem;padding:10px;margin-top:8px;background:#15243a;color:#fff;border-radius:8px">等待同步</div>
     </details>
-    <div class="fields">
-      <div class="field"><label>受试者编号</label><input id="subjectId" type="text" maxlength="64" placeholder="例如 P001"></div>
-      <div class="field"><label>设备编号</label><input id="deviceId" type="text" maxlength="64" placeholder="例如 EOG-01"></div>
-      <div class="field"><label>操作者</label><input id="operatorId" type="text" maxlength="64" placeholder="姓名或编号"></div>
-    </div>
-    <div class="fields">
-      <div class="field"><label>测试备注</label><input id="condition" type="text" maxlength="160" placeholder="例如 常规测试"></div>
-    </div>
-  </section>
+  </details>
 
 
   <section id="debugPanel" class="card hidden">
-    <div class="row"><h2>调试台</h2><button id="btnDebugClose" class="ghost" type="button">隐藏调试台</button></div>
+    <div class="panel-heading"><h2>采集设置</h2><button id="btnDebugClose" class="ghost" type="button">收起设置</button></div>
     <div class="fields">
-      <div class="field"><label>阈值下限（ADC 计数）</label><input id="fMinDrop" type="number" value="8" min="0" max="200" step="1"><span class="tiny">默认 8；自动阈值会随噪声调整，不会低于此值。设置在测试开始时锁定，修改后下次测试生效。</span></div>
-      <div class="field"><label><input id="fBlinkCal" type="checkbox">开启现场眨眼标定</label><span class="tiny">每次开始测试先请受试者眨 5 次，用真实眨眼深度定阈值。需要培训操作者，默认关闭。</span></div>
-      <div class="field"><label>标定深度比例</label><input id="fBlinkCalRatio" type="number" value="0.6" min="0.2" max="1" step="0.05"><span class="tiny">参考深度取已记录眨眼深度的第20百分位；按此比例计算，并与噪声项取较大值。</span></div>
+      <div class="field"><label>阈值下限（ADC 计数）</label><input id="fMinDrop" type="number" value="8" min="0" max="200" step="1"></div>
+      <div class="field"><label><input id="fBlinkCal" type="checkbox">先眨 5 次标定</label></div>
+      <div class="field"><label>标定深度比例</label><input id="fBlinkCalRatio" type="number" value="0.6" min="0.2" max="1" step="0.05"></div>
       <div class="field"><label>自动抗干扰等级</label><input id="fMult" type="number" value="4" min="0" max="12" step="0.5"></div>
       <div class="field"><label>两次眨眼最短间隔（毫秒）</label><input id="fRefr" type="number" value="300" min="0" step="50"></div>
     </div>
     <div class="fields">
       <div class="field"><label><input id="manualThresholdEnabled" type="checkbox">使用手动抗纹波阈值</label></div>
       <div class="field"><label>手动阈值（ADC 计数）</label><input id="manualDrop" type="number" value="60" min="0" max="2000" step="1" disabled></div>
-      <div class="field"><label>说明</label><span class="tiny">手动模式实际阈值 = max（阈值下限，手动阈值）。例如要用 8，两项都需设为 8；数值越大越不容易把纹波当作眨眼。</span></div>
     </div>
     <details><summary>设备显示与固件维护</summary>
     <div class="fields">
       <div class="field"><label>设备屏幕下两行文字</label><textarea id="oledText" rows="2" maxlength="16">眨眼采集</textarea></div>
       <div class="field"><label>屏幕文字</label><button id="btnOledSend" class="ghost" type="button">发送到设备</button></div>
-      <div class="field"><label>说明</label><span class="tiny">第 1、2 行显示眨眼次数和频率；这里的文字显示在第 3、4 行，按屏幕宽度自动换行，也可以按回车强制换行。</span></div>
     </div>
-    <p class="tiny">最多输入 16 个字符，每行最多 8 个字，实际显示为 OLED 下两行；文字由手机渲染后传给设备。连接设备后可随时重新发送。</p>
     <div class="fields">
       <div class="field"><label>设备屏幕下两行图片</label><input id="oledImage" type="file" accept="image/*"><div class="oled-image-editor"><canvas id="oledImagePreview" class="oled-preview" width="128" height="32" aria-label="OLED图片预览"></canvas><div class="oled-image-tools"><button id="btnOledImageCenter" class="ghost" type="button" disabled>恢复居中</button><span class="tiny">可直接拖动预览调整实际显示位置</span></div></div></div>
       <div class="field"><label>屏幕图片</label><button id="btnOledImageSend" class="ghost" type="button" disabled>发送图片到设备</button><button id="btnOledImageClear" class="ghost" type="button" disabled>清除图片</button></div>
-      <div class="field"><label>说明</label><span class="tiny">图片会自动等比例缩放并保持完整显示；拖动预览可调整实际 OLED 位置，发送图片后会替换下两行文字。</span></div>
     </div>
     <p id="oledImageStatus" class="tiny">尚未选择图片。建议使用黑白、轮廓清晰的图片。</p>
     <div class="fields">
@@ -233,8 +138,8 @@
 
 
 
-  <section class="card">
-    <h2>结果查看（可选）</h2>
+  <details class="card" id="frequencyPanel">
+    <summary>区间统计</summary>
     <div class="fields">
       <div class="field"><label>从第几秒开始</label><input id="fT0" type="number" value="0" min="0" step="1"></div>
       <div class="field"><label>到第几秒结束</label><input id="fT1" type="number" value="0" min="0" step="1"></div>
@@ -260,7 +165,7 @@
       <div>记录时长<b id="sDur">--</b></div>
       <div>窗口数<b id="sWin">--</b></div>
     </div>
-  </section>
+  </details>
 
   <div id="cloudGate" class="cloud-gate hidden">
     <div class="cloud-box">
@@ -276,7 +181,6 @@
   <div id="loginGate" class="cloud-gate">
     <div class="cloud-box">
       <h3>调试台</h3>
-      <p class="tiny" style="margin:0 0 10px">需要管理员密码（与 admin.html 相同）。</p>
       <input id="loginPass" type="password" autocomplete="current-password" placeholder="管理员密码"
              style="width:100%;background:#0e1b2d;border:1px solid #2a3f5c;color:var(--text);border-radius:6px;padding:8px;font:inherit;font-size:14px">
       <p id="loginError" class="tiny" style="color:#ff6679;min-height:16px;margin:6px 0 0"></p>
@@ -285,6 +189,6 @@
   </div>
 </main>
 
-<script src="blink-app.js?v=20261114-2"></script>
+<script src="blink-app.js?v=20261114-3"></script>
 </body>
 </html>

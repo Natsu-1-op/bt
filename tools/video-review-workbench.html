@@ -6,11 +6,20 @@
 <style>
 :root{color-scheme:dark;background:#0a1422;color:#e9f2fc;font:16px system-ui,sans-serif}
 *{box-sizing:border-box}body{max-width:1480px;margin:auto;padding:20px}h1{font-size:1.55rem;margin:0 0 16px}h2{font-size:1rem;margin:0 0 8px}p{color:#aec2da;line-height:1.45;margin:8px 0}section{background:#112035;border:1px solid #29425e;border-radius:12px;padding:14px;min-width:0}
-.row{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:10px 0}.pair{display:grid;grid-template-columns:minmax(280px,1fr) minmax(360px,1.5fr);gap:12px}.toolbar{justify-content:space-between}.nav{margin-top:12px}.wave{width:100%;height:clamp(250px,40vh,470px);display:block;background:#0b1625;border-radius:8px;cursor:crosshair}video{width:100%;height:clamp(250px,40vh,470px);background:#05090f;display:block;border-radius:8px}button,input,select{font:inherit;color:inherit}button,select,.file{border:1px solid #456888;border-radius:7px;background:#1a3049;padding:7px 10px}button:disabled{opacity:.45}button[aria-pressed=true]{background:#23617b}#seek{width:100%;accent-color:#75c9f4}.video-key{color:#67c7fb}.sensor-key{color:#ffd46c}.trial-key{color:#f8a4fa}.muted{font-size:.88rem;color:#aec2da}.actions{display:flex;gap:7px;flex-wrap:wrap}#file{display:none}.diff{width:min(100%,24rem)}@media(max-width:760px){body{padding:12px}.pair{grid-template-columns:1fr}.wave,video{height:270px}}
+.row{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:10px 0}.pair{display:grid;grid-template-columns:minmax(280px,1fr) minmax(360px,1.5fr);gap:12px}.toolbar{justify-content:space-between}.nav{margin-top:12px}.wave{width:100%;height:clamp(250px,40vh,470px);display:block;background:#0b1625;border-radius:8px;cursor:crosshair}video{width:100%;height:clamp(250px,40vh,470px);background:#05090f;display:block;border-radius:8px}button,input,select{font:inherit;color:inherit}button,select,.file{border:1px solid #456888;border-radius:7px;background:#1a3049;padding:7px 10px}button:disabled{opacity:.45}button[aria-pressed=true]{background:#23617b}#seek{width:100%;accent-color:#75c9f4}.video-key{color:#67c7fb}.sensor-key{color:#ffd46c}.muted{font-size:.88rem;color:#aec2da}.actions{display:flex;gap:7px;flex-wrap:wrap}#file{display:none}.diff{width:min(100%,24rem)}@media(max-width:760px){body{padding:12px}.pair{grid-template-columns:1fr}.wave,video{height:270px}}
+</style>
+<style>
+header{display:flex;justify-content:space-between;align-items:center;gap:18px;flex-wrap:wrap;margin-bottom:10px}
+header h1{margin:0}.toolbar{gap:14px}.toolbar select{max-width:100%}#markStatus:empty,#regionStatus:empty{display:none}
+.region-panel{background:#112035;border:1px solid #29425e;border-radius:12px;padding:14px}
+summary{cursor:pointer;color:#e9f2fc;font-weight:650}.region-panel input{width:7em}
+.actions button[data-label="是眨眼"]{border-color:#4c9e83}.file{cursor:pointer}
+button:focus-visible,select:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid #9ad6ff;outline-offset:3px}
+@media(max-width:760px){header{align-items:flex-start;gap:0}.toolbar{width:100%}.diff{width:100%}}
 </style>
 <body>
-<h1>眨眼视频与波形复核</h1>
-<div class="row toolbar"><label>受试者 <select id="subject"></select></label><div class="actions"><label class="file" for="importMarks">载入复核标记</label><input id="importMarks" type="file" accept=".json,application/json" hidden><button id="export">保存复核标记</button></div></div>
+<header><h1>眨眼视频与波形复核</h1>
+<div class="row toolbar"><label>受试者 <select id="subject"></select></label><div class="actions"><label class="file" for="importMarks">载入标记</label><input id="importMarks" type="file" accept=".json,application/json" hidden><button id="export">保存标记</button></div></div></header>
 <p id="markStatus" class="muted" role="status"></p>
 <p id="summary" role="status"></p>
 <div class="pair">
@@ -22,20 +31,20 @@
   </section>
   <section><h2>传感器波形 · ADC 计数</h2><canvas class="wave" id="wave" aria-label="传感器波形，点击可定位"></canvas>
     <input id="seek" type="range" min="0" step="1" aria-label="传感器时间">
-    <div class="row"><span class="video-key">视频差异</span><span class="sensor-key">传感器事件</span><span class="trial-key">标定试算</span><label><input id="trial" type="checkbox"> 显示标定试算</label><label>窗口 <select id="zoom"><option value="2400">2.4 秒</option><option value="4800">4.8 秒</option><option value="10000">10 秒</option></select></label></div>
-    <p id="time" class="muted"></p><p id="trialInfo" class="muted"></p>
+    <div class="row"><span class="video-key">视频差异</span><span class="sensor-key">传感器事件</span><label>窗口 <select id="zoom"><option value="2400">2.4 秒</option><option value="4800">4.8 秒</option><option value="10000">10 秒</option></select></label></div>
+    <p id="time" class="muted"></p>
   </section>
 </div>
 <section class="nav">
   <h2>待核对差异</h2>
-  <div class="row"><select id="filter" aria-label="差异类型"><option value="">全部差异</option><option>仅视频</option><option>仅传感器</option><option>视频闭眼明显</option><option>试算有响应</option><option>试算新增仅传感器</option><option>尚未标记</option></select>
+  <div class="row"><select id="filter" aria-label="差异类型"><option value="">全部差异</option><option>仅视频</option><option>仅传感器</option><option>视频闭眼明显</option><option>尚未标记</option></select>
     <button id="prev" aria-label="上一处">上一处</button><select class="diff" id="diff" aria-label="差异位置"></select><button id="next" aria-label="下一处">下一处</button><button id="nextUnmarked">下一处未标记</button></div>
   <div class="actions" id="decisions"><button data-label="是眨眼">是眨眼</button><button data-label="非眨眼">非眨眼</button><button data-label="看不清">看不清</button><button data-label="">清除标记</button></div>
   <p class="muted">快捷键 1 是眨眼 · 2 非眨眼 · 3 看不清 · N 下一处未标记</p>
   <p id="hint" class="muted" role="status"></p>
 </section>
-<section class="nav">
-  <h2>区间复核</h2>
+<details class="nav region-panel" open>
+  <summary>区间复核</summary>
   <p class="muted">时间从传感器记录起点算。用进度条定位区间两端，再保存类型。</p>
   <div class="row">
     <label>起点（秒） <input id="regionStart" type="number" step=".001" min="0"></label><button id="takeRegionStart">取当前起点</button>
@@ -43,7 +52,7 @@
   </div>
   <div class="row"><label>复核类型 <select id="regionKind"><option>人在动</option><option>噪声</option><option>真值</option></select></label><button id="addRegion">保存区间</button></div>
   <p id="regionStatus" class="muted" role="status"></p><div id="regionList"></div>
-</section>
+</details>
 <!-- REVIEW_DATA -->
 <script>
 const $=id=>document.getElementById(id);
@@ -113,14 +122,10 @@ function selectSubject() {
   $('align').closest('details').open=false;
   loadVideo(row.videoUrl);$('file').value='';
   $('videoStatus').textContent=row.videoFile||'暂无已配对视频';
-  $('seek').max=Math.ceil(row.duration);$('trial').disabled=!row.trial;$('trial').checked=false;
+  $('seek').max=Math.ceil(row.duration);
   for(const id of ['regionStart','regionEnd']){$(id).value='';$(id).max=Math.round(row.duration)/1000;}
   $('regionStatus').textContent='';showRegions();
-  $('trial').parentElement.hidden=!row.trial;
-  for(const opt of $('filter').options)if(opt.value.startsWith('试算'))opt.hidden=!row.trial;
   if($('filter').selectedOptions[0]?.hidden)$('filter').value='';
-  const t=row.trial;
-  $('trialInfo').textContent=t?`试算最低幅度 ${t.before.minDropCounts} → ${Number(t.settings.minDropCounts.toFixed(2))} ADC，噪声倍数 ${t.before.noiseMultiplier} → ${Number(t.settings.noiseMultiplier.toFixed(2))}。`:'';
   updateSummary();
   position=center=0;refreshList();
   if(!list.length) jump(row.original[0]??row.adaptive[0]??0);
@@ -130,7 +135,6 @@ function updateSummary() {
   if(manualAlign)$('summary').textContent+=' · 差异清单来自上次批处理';
   if(Number.isFinite(row.alignedCoverage))$('summary').textContent+=` · 双方覆盖 ${(row.alignedCoverage/1000).toFixed(1)} 秒`;
   if(row.automatic){const a=row.automatic;$('summary').textContent+=` · 自动补回 ${a.added} · 排除 ${a.removed} · 确认保留 ${a.confirmed} · 确认仅视频 ${a.videoOnly}`;if(a.reviewed)$('summary').textContent+=` · 已逐帧复查 ${a.reviewed} 处`}
-  if(row.trial){const t=row.trial;$('summary').textContent+=` · 试算补回 ${t.recovered.length} 处，剩余仅视频 ${t.videoOnly} / 仅传感器 ${t.sensorOnly}${t.suggested?' · 可优先核对':''}`;}
 }
 const sensorAt=d=>manualAlign&&d.type==='仅视频'?d.video-offset:d.sensor;
 const videoAt=d=>manualAlign&&d.type!=='仅视频'?d.sensor+offset:d.video;
@@ -139,16 +143,14 @@ function refreshList(retain=null) {
   const filters={
     '尚未标记':d=>!marks[markKey(d)],
     '视频闭眼明显':d=>d.priority||d.reason?.startsWith('视频闭眼明显'),
-    '试算有响应':d=>d.type==='仅视频'&&row.trial?.recovered.includes(d.video),
   };
-  list=filter==='试算新增仅传感器'?(row.trial?.newSensorOnly??[]):
-    row.differences.filter(filters[filter]??(d=>!filter||d.type===filter));
+  list=row.differences.filter(filters[filter]??(d=>!filter||d.type===filter));
   const index=retain?list.findIndex(d=>markKey(d)===markKey(retain)):0;
   selectDiff(list.length?Math.max(0,index):-1);
 }
 function selectDiff(index, move=true) {
   selected=index;
-  $('diff').replaceChildren(...list.map((d,i)=>option(`${i+1} / ${list.length} · ${second(videoAt(d))} 秒 · ${d.type}${row.trial?.recovered.includes(d.video)?' · 试算有响应':''}${marks[markKey(d)]?' · '+marks[markKey(d)].decision:''}`,i)));
+  $('diff').replaceChildren(...list.map((d,i)=>option(`${i+1} / ${list.length} · ${second(videoAt(d))} 秒 · ${d.type}${marks[markKey(d)]?' · '+marks[markKey(d)].decision:''}`,i)));
   if(!list.length)$('diff').add(option('当前没有差异',''));
   $('diff').selectedIndex=Math.max(0,index);
   $('prev').disabled=index<=0;$('next').disabled=index<0||index>=list.length-1;
@@ -201,8 +203,7 @@ function draw() {
   for(const e of row.aligned||row.adaptive.length?row.adaptive:row.original)line(e,'#b8903d');
   for(const e of row.candidates)line(e,'#6b7a89',top+22);
   for(const e of row.differences)if(e.type==='仅视频')line(sensorAt(e),'#438dc2');
-  if($('trial').checked)for(const e of row.trial?.events??[])line(e,'#e295e3',top+16);
-  if(list[selected])line(sensorAt(list[selected]),{'仅视频':'#67c7fb','仅传感器':'#ffd46c','试算新增仅传感器':'#e295e3'}[list[selected].type]);
+  if(list[selected])line(sensorAt(list[selected]),{'仅视频':'#67c7fb','仅传感器':'#ffd46c'}[list[selected].type]);
   ctx.strokeStyle='#30d7a3';ctx.beginPath();let connected=false;
   for(let i=first;i<=last;i++){
     if(low[i]==null){connected=false;continue;}
@@ -280,7 +281,7 @@ $('nextUnmarked').onclick=()=>{
   if(target!==row){$('subject').value=String(cases.indexOf(target));selectSubject();}
   refreshList(difference);
 };
-$('seek').oninput=()=>jump(Number($('seek').value),!$('align').closest('details').open);$('zoom').onchange=draw;$('trial').onchange=draw;
+$('seek').oninput=()=>jump(Number($('seek').value),!$('align').closest('details').open);$('zoom').onchange=draw;
 canvas.onclick=e=>{const bounds=canvas.getBoundingClientRect(),span=Number($('zoom').value);jump(Math.max(0,center-span/2)+(e.clientX-bounds.left-45)*span/(bounds.width-57),!$('align').closest('details').open);};
 $('align').onclick=()=>{
   if(video.readyState<1)return;

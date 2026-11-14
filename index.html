@@ -5,101 +5,27 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#07111f">
 <title>眨眼测试</title>
-<style>
-  :root{
-    color-scheme:dark;
-    --bg:#07111f; --card:#0e1b2d; --line:#1d3048; --text:#e5eefb; --muted:#8ea3bd;
-    --ok:#38d996; --warn:#f4bf4f; --bad:#ff6679; --blue:#6ca9ff; --violet:#b58cff;
-  }
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--text);
-       font:15px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-  main{max-width:960px;margin:0 auto;padding:12px 12px 40px}
-  h1{margin:0;font-size:19px;color:var(--ok);user-select:none;touch-action:manipulation}
-  h2{margin:0 0 10px;font-size:14px;color:var(--text);font-weight:700}
-  .sub{color:var(--muted);font-size:11.5px;margin-top:3px}
-  header{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;margin-bottom:10px}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px;margin-bottom:10px}
-  button{border:1px solid #315274;background:#172b43;color:var(--text);border-radius:8px;
-         padding:10px 12px;font:inherit;font-size:13px;font-weight:700;touch-action:manipulation;cursor:pointer}
-  button:disabled{opacity:.38;cursor:not-allowed}
-  button.primary{background:#087c57;border-color:#21b77f}
-  button.warn{background:#7a5511;border-color:#c9962e}
-  button.danger{background:#6a2635;border-color:#c64b62}
-  button.ghost{background:#12203a}
-  .top{display:flex;align-items:center;gap:8px}
-  .dot{width:9px;height:9px;border-radius:50%;background:var(--bad);flex:0 0 auto}
-  .dot.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
-  #conn{color:var(--muted);font-size:12px;flex:1;min-width:0}
-  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
-  .metric{border:1px solid var(--line);background:#091525;border-radius:8px;padding:9px;min-width:0}
-  .metric label{display:block;color:var(--muted);font-size:11px;margin-bottom:4px}
-  .metric strong{display:block;font-size:17px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .good{color:var(--ok)} .warnc{color:var(--warn)} .badc{color:var(--bad)} .bluec{color:var(--blue)}
-  .scope{height:300px;padding:0;overflow:hidden;position:relative}
-  .scope canvas{width:100%;height:100%;display:block}
-  .legend{position:absolute;right:8px;top:8px;background:#07111fdd;border:1px solid var(--line);
-          border-radius:6px;padding:6px 8px;color:var(--muted);font-size:10.5px;line-height:1.6;pointer-events:none}
-  .legend label{pointer-events:auto;cursor:pointer;display:inline-flex;align-items:center;gap:4px;user-select:none;color:var(--text)}
-  .cloud-gate{position:fixed;inset:0;background:#03070ddd;display:flex;align-items:center;justify-content:center;z-index:50;padding:20px}
-  .cloud-box{background:#0b1524;border:1px solid var(--line);border-radius:12px;padding:20px 22px;max-width:360px;width:100%;text-align:center}
-  .cloud-box h3{margin:0 0 8px;font-size:16px;color:var(--text)}
-  .cloud-spin{width:28px;height:28px;margin:2px auto 14px;border:3px solid #24405f;border-top-color:#38d996;border-radius:50%;animation:cloudspin .9s linear infinite}
-  @keyframes cloudspin{to{transform:rotate(360deg)}}
-  .cloud-actions{display:none;gap:8px;margin-top:14px}
-  .cloud-actions.show{display:flex}
-  .cloud-actions button{flex:1 1 0}
-  .controls{display:flex;gap:8px;flex-wrap:wrap}
-  .controls button{flex:1 1 118px}
-  .note{color:var(--muted);font-size:11.5px;line-height:1.6;margin:9px 0 0}
-  .note b{color:var(--text)}
-  .fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:9px}
-  .field{background:#091525;border:1px solid var(--line);border-radius:8px;padding:8px;min-width:0}
-  .field label{display:block;color:var(--muted);font-size:11px;margin-bottom:4px}
-  .field input,.field select,.field textarea{width:100%;background:#0e1b2d;border:1px solid #2a3f5c;color:var(--text);
-          border-radius:6px;padding:6px;font:inherit;font-size:13px}
-  .field textarea{min-height:58px;resize:vertical;line-height:1.35}
-  .oled-preview{display:block;width:256px;max-width:100%;height:64px;image-rendering:pixelated;
-                background:#000;border:1px solid #2a3f5c;border-radius:6px;margin-top:0;
-                touch-action:none;cursor:grab;user-select:none}
-  .oled-preview.dragging{cursor:grabbing}
-  .oled-image-editor{width:256px;max-width:100%;margin-top:7px}
-  .oled-image-tools{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:6px}
-  .oled-image-tools button{padding:6px 9px;font-size:11px}
-  #freqWrap{height:200px;position:relative;border:1px solid var(--line);border-radius:8px;background:#050b13;overflow:hidden}
-  #freqWrap canvas{width:100%;height:100%;display:block}
-  .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:9px;color:var(--muted);font-size:11.5px}
-  .summary div{background:#091525;border-radius:6px;padding:7px}
-  .summary b{color:var(--text);display:block;font-size:15px;margin-top:2px}
-  .tiny{color:var(--muted);font-size:11px}
-  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-  .hidden{display:none !important}
-  .field input[type="checkbox"]{width:auto;vertical-align:middle;margin:0 6px 0 0}
-  /* 手机端：统计卡片保留两列，录入项统一单列，避免同一组表单忽两列忽一列。 */
-  @media (max-width:860px){
-    .fields{grid-template-columns:repeat(2,minmax(0,1fr))}
-  }
-  @media (max-width:620px){
-    .grid{grid-template-columns:repeat(2,1fr)}
-    .summary{grid-template-columns:repeat(2,1fr)}
-    .fields{grid-template-columns:1fr}
-    .scope{height:250px}
-  }
-</style>
+<link rel="stylesheet" href="blink.css?v=20261114-3">
 </head>
 <body>
 <main>
   <header>
     <div>
       <h1 id="appTitle">眨眼测试</h1>
-      <div class="sub">连接设备后，按步骤完成本次测试并保存数据。<span id="debugGateStatus"></span></div>
+      <div class="top"><span id="dot" class="dot"></span><span id="conn">请先连接采集设备。</span></div>
     </div>
     <button id="btnConn" class="primary">连接设备</button>
   </header>
 
-  <section class="card top">
-    <span id="dot" class="dot"></span>
-    <span id="conn">请先连接采集设备。</span>
+  <section class="card">
+    <div class="identity field"><label for="subjectId">受试者编号</label><input id="subjectId" type="text" maxlength="64" placeholder="例如 26"></div>
+    <div class="controls">
+      <button id="btnStart" class="primary" disabled>开始测试</button>
+      <button id="btnPause" class="warn" disabled>暂停测试</button>
+      <button id="btnStop" class="danger" disabled>结束测试</button>
+      <button id="btnExportBundle" class="ghost" disabled>导出数据</button>
+    </div>
+    <p class="note" id="help">佩戴后等波形稳定再开始。准备时请保持睁眼，结束后导出数据。</p>
   </section>
 
   <section class="grid" style="margin-bottom:10px">
@@ -110,37 +36,21 @@
   </section>
 
   <section class="card scope">
-    <canvas id="scope"></canvas>
+    <canvas id="scope" aria-label="采集波形"></canvas>
     <div class="legend">
-      <label><input id="autoRange" type="checkbox" checked>纵轴自动量程</label><br>
-      绿：处理后波形<br>灰：原始波形<br>红/蓝：识别范围<br>黄线：已识别眨眼
+      <span style="--series:#38d996">处理后</span><span style="--series:#8ea3bd">原始</span><span style="--series:#f4bf4f">眨眼标记</span>
+      <label><input id="autoRange" type="checkbox" checked>自动量程</label>
     </div>
   </section>
 
-  <section class="card">
-    <div class="controls">
-      <button id="btnStart" class="primary" disabled>开始测试</button>
-      <button id="btnPause" class="warn" disabled>暂停测试</button>
-      <button id="btnStop" class="danger" disabled>结束测试</button>
-      <button id="btnExportBundle" class="ghost" disabled>导出数据</button>
-    </div>
-    <p class="note" id="help">
-      连接后先佩戴并观察波形是否平稳。填写测试信息后点 <b>开始测试</b>；开始后的约 3 秒内请睁眼并尽量保持自然状态。
-      测试结束后，请在上方点击“导出数据”保存本次测试文件。
-    </p>
-  </section>
 
-  <section class="card">
-    <h2>测试信息</h2>
-    <details><summary>与录像对时（可选）</summary>
+  <section class="card optional" aria-label="补充设置">
+    <details><summary>与录像对时</summary>
       <p class="note">让录像拍到下方提示区，在计数开始后和结束前各点一次。闪光会记在本次数据里。</p>
       <button id="btnVideoSync" class="ghost" disabled>发出同步闪光</button>
       <div id="videoSyncCue" role="status" style="min-height:3rem;padding:10px;margin-top:8px;background:#15243a;color:#fff;border-radius:8px">等待同步</div>
     </details>
-    <div class="fields">
-      <div class="field"><label>受试者编号</label><input id="subjectId" type="text" maxlength="64" placeholder="例如 26"></div>
-    </div>
-    <details><summary>其他信息（可选）</summary>
+    <details><summary>补充记录信息</summary>
     <div class="fields">
       <div class="field"><label>设备编号</label><input id="deviceId" type="text" maxlength="64" placeholder="例如 EOG-01"></div>
       <div class="field"><label>操作者</label><input id="operatorId" type="text" maxlength="64" placeholder="姓名或编号"></div>
@@ -154,16 +64,16 @@
 
   <details class="card">
     <summary>本机记录</summary>
-    <div class="fields">
-      <div class="field"><label>本机保存的测试</label><select id="sessionList"><option value="">当前测试</option></select>
-        <button id="btnDeleteSession" class="danger" type="button" style="width:100%;padding:6px;margin-top:6px;font-size:12px" disabled>删除这条</button>
-        <button id="btnExportOne" class="ghost" type="button" style="width:100%;padding:6px;margin-top:6px;font-size:12px" disabled>导出这条</button>
-        <button id="btnExportAll" class="ghost" type="button" style="width:100%;padding:6px;margin-top:6px;font-size:12px">导出全部</button>
+    <div class="field"><label for="sessionList">本机保存的测试</label><select id="sessionList"><option value="">当前测试</option></select>
+      <div class="record-actions">
+        <button id="btnLoad" class="primary">打开所选测试</button>
+        <button id="btnExportOne" class="ghost" disabled>导出这条</button>
+        <button id="btnExportAll" class="ghost" disabled>导出全部</button>
+        <button id="btnDeleteSession" class="danger" disabled>删除这条</button>
+        <button id="btnClear" class="ghost" disabled>清除当前显示</button>
       </div>
-      <div class="field"><label>查看历史测试</label><button id="btnLoad" class="ghost" style="width:100%;padding:6px">打开所选测试</button></div>
     </div>
-    <button id="btnClear" class="ghost" disabled>清除当前内容</button>
-    <details><summary>区间统计</summary>
+    <details id="frequencyPanel"><summary>区间统计</summary>
     <div class="fields">
       <div class="field"><label>起始秒</label><input id="fT0" type="number" value="0" min="0" step="1"></div>
       <div class="field"><label>结束秒</label><input id="fT1" type="number" value="0" min="0" step="1"></div>
@@ -197,6 +107,6 @@
   </div>
 </main>
 
-<script src="blink-app.js?v=20261114-2"></script>
+<script src="blink-app.js?v=20261114-3"></script>
 </body>
 </html>

@@ -30,7 +30,7 @@ canvas{display:block;width:100%;height:clamp(205px,40vh,365px);background:#08111
 </style>
 </head>
 <body>
-<header><h1>眨眼记录播放器</h1><p>波形回放 · 北京时间</p></header>
+<header><h1>眨眼记录播放器</h1></header>
 <section>
 <div class="row"><label>导入播放数据<input id="file" type="file" accept=".json,application/json"></label>
 <label>受试者<select id="record" disabled></select></label></div>
@@ -39,7 +39,7 @@ canvas{display:block;width:100%;height:clamp(205px,40vh,365px);background:#08111
 <section aria-label="波形回放">
 <div class="heading"><h2 id="subject">未选择记录</h2><span id="quality" hidden></span><span id="stats">—</span></div>
 <canvas id="wave" aria-label="显示波形与眨眼标记"></canvas>
-<div class="legend"><span style="--color:#38d996">波形</span><span style="--color:#f3c75c">眨眼标记</span><span style="--color:#76aaff">补检候选</span></div>
+<div class="legend"><span style="--color:#38d996">波形</span><span style="--color:#f3c75c">眨眼标记</span><span id="candidateLegend" style="--color:#76aaff" hidden>补检候选</span></div>
 <input id="seek" aria-label="播放进度" type="range" min="0" max="0" value="0" step="1" disabled>
 <p id="clock" aria-live="off">尚未导入</p>
 <div class="row controls"><button id="play" disabled>播放</button><button id="pause" disabled>暂停</button>
@@ -197,7 +197,9 @@ function draw(){
   const quality=$('quality');
   quality.hidden=false;quality.dataset.error=String(dynamic);quality.textContent=dynamic?'动态误差':'正常';
   $('clock').textContent=time+' · '+(pos/1000).toFixed(2)+' / '+(r.duration_ms/1000).toFixed(2)+' 秒';
-  $('stats').textContent='眨眼标记 '+r.marks.filter(t=>t<=pos).length+' · 补检候选 '+(r.review_marks||[]).filter(t=>t<=pos).length;
+  const candidates=r.review_marks??[];
+  $('candidateLegend').hidden=!candidates.length;
+  $('stats').textContent='眨眼标记 '+r.marks.filter(t=>t<=pos).length+(candidates.length?' · 补检候选 '+candidates.filter(t=>t<=pos).length:'');
   $('seek').value=Math.round(pos);$('seek').disabled=false;
   $('play').textContent=pos>=r.duration_ms?'重播':'播放';$('play').disabled=playing;
   $('pause').disabled=!playing;$('prev').disabled=$('next').disabled=!r.marks.length&&!r.review_marks?.length;
